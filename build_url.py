@@ -169,7 +169,8 @@ def ask_filters() -> list[tuple[str, object]]:
 
 # ---------------------------------------------------------------- main
 
-def main() -> None:
+def get_search_url() -> str:
+    """Run the prompts (region, district, suburbs, filters) and return the URL."""
     locations = load_locations()
 
     region = pick_one("Regions on file", list(locations))
@@ -182,7 +183,11 @@ def main() -> None:
     filters = ask_filters()
 
     print(f"\n{region} / {district}: {', '.join(name for name, _ in chosen)}")
-    print(build_url(region, district, [sid for _, sid in chosen], filters))
+    return build_url(region, district, [sid for _, sid in chosen], filters)
+
+
+def main() -> None:
+    print(get_search_url())
 
 
 if __name__ == "__main__":
