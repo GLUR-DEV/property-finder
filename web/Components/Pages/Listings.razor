@@ -62,8 +62,26 @@ else
                 </label>
             </div>
 
-            <label>Bedrooms at least
-                <input type="number" min="0" max="6" @bind="minBeds" />
+            <div class="pair">
+                <label>Bedrooms at least
+                    <input type="number" min="0" max="6" @bind="minBeds" />
+                </label>
+                <label>Bathrooms at least
+                    <input type="number" min="0" max="6" @bind="minBaths" />
+                </label>
+            </div>
+
+            <label>Available by
+                <input type="date" @bind="availableBy" />
+            </label>
+            <p class="muted small hint">Listings with no available date count as available now.</p>
+
+            <label>Landlord
+                <select @bind="landlord">
+                    <option value="">Agency or private</option>
+                    <option value="agency">Agencies only</option>
+                    <option value="private">Private landlords only</option>
+                </select>
             </label>
 
             <button class="link" @onclick="Reset">Clear filters</button>
@@ -242,7 +260,9 @@ else
     private string text = "";
     private string suburb = "";
     private string propertyType = "";
-    private int? minPrice, maxPrice, minBeds;
+    private int? minPrice, maxPrice, minBeds, minBaths;
+    private DateTime? availableBy;
+    private string landlord = "";
     private string sort = "newest";
     private string view = "cards";
 
@@ -265,6 +285,8 @@ else
         }
     }
 
+    private static bool HasAgency(Listing l) => !string.IsNullOrWhiteSpace(l.Agency?.Name);
+
     private List<Listing> Filtered()
     {
         var q = result!.Listings.AsEnumerable();
@@ -279,6 +301,10 @@ else
         if (minPrice is { } lo) q = q.Where(l => l.RentPerWeek >= lo);
         if (maxPrice is { } hi) q = q.Where(l => l.RentPerWeek <= hi);
         if (minBeds is { } b) q = q.Where(l => l.Bedrooms >= b);
+        if (minBaths is { } baths) q = q.Where(l => l.Bathrooms >= baths);
+        if (availableBy is { } by) q = q.Where(l => l.AvailableDate is not { } d || d.Date <= by.Date);
+        if (landlord == "agency") q = q.Where(HasAgency);
+        if (landlord == "private") q = q.Where(l => !HasAgency(l));
         return Sort(q).ToList();
     }
 
@@ -326,7 +352,8 @@ else
 
     private void Reset()
     {
-        text = suburb = propertyType = "";
-        minPrice = maxPrice = minBeds = null;
+        text = suburb = propertyType = landlord = "";
+        minPrice = maxPrice = minBeds = minBaths = null;
+        availableBy = null;
     }
 }

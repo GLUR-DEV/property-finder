@@ -207,7 +207,7 @@ body:has(.modal-backdrop) { overflow: hidden; }
 /* ---- map ---- */
 .maplayout { display: grid; grid-template-columns: 17rem 1fr; gap: 1.5rem; align-items: start; }
 .mapfilters { max-height: calc(100vh - 6rem); overflow-y: auto; padding: 0 .5rem 1rem 0; }
-.mapfilters .hint { margin: -.5rem 0 0; }
+.filters .hint { margin: -.5rem 0 0; }
 .sr-only { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip: rect(0, 0, 0, 0); border: 0; white-space: nowrap; }
 .listing-map { position: relative; z-index: 0; height: calc(100vh - 11rem); min-height: 26rem; border: 1px solid var(--line); border-radius: 10px; background: var(--tint); }
 .gradient { height: .8rem; border-radius: 6px; border: 1px solid rgba(22, 40, 46, .5); }
