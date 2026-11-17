@@ -40,8 +40,8 @@ public class ApiClient(HttpClient http)
         };
     }
 
-    public Task<StatsResponse?> GetStatsAsync(string? scope = null) =>
-        GetAsync<StatsResponse>(scope is null ? "api/stats" : $"api/stats?scope={Uri.EscapeDataString(scope)}");
+    public Task<StatsResponse?> GetStatsAsync(string? scopeKey = null) =>
+        GetAsync<StatsResponse>(scopeKey is null ? "api/stats" : $"api/stats?scope_key={Uri.EscapeDataString(scopeKey)}");
 
     public Task<JobDto> StartSearchAsync(SearchRequest request) => PostAsync("api/searches", request);
 
@@ -87,7 +87,9 @@ public class ApiClient(HttpClient http)
         }
         catch (HttpRequestException)
         {
-            throw new ApiException("Can't reach the API. Start it with: uvicorn main:app --port 8000");
+            throw new ApiException("Can't reach the API. Start both parts with: python run.py. "
+                + "If you did, check the [api] output for an error. To run the API alone, use "
+                + "uvicorn main:app --port 8000 from the api folder.");
         }
         catch (TaskCanceledException)
         {

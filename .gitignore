@@ -8,3 +8,7 @@ __pycache__/
 api/data/response_raw.json
 api/data/page.html
 api/data/history.db
+api/data/listings.json
+api/data/listings.csv
+# Visual Studio cache
+.vs/

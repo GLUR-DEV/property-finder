@@ -18,10 +18,14 @@ public static class Format
     public static string Rent(Listing l) =>
         l.RentPerWeek is { } r ? "$" + r.ToString("#,0.##", CultureInfo.InvariantCulture) : (l.PriceDisplay ?? "No price");
 
-    public static string Ago(DateTimeOffset? date)
+    /// <summary>
+    /// How long a listing had been up, measured at <paramref name="asOf"/> (the time of the search, so it
+    /// matches the Statistics page). Defaults to now.
+    /// </summary>
+    public static string Ago(DateTimeOffset? date, DateTimeOffset? asOf = null)
     {
         if (date is not { } d) return "";
-        var days = (int)(DateTimeOffset.Now - d).TotalDays;
+        var days = (int)((asOf ?? DateTimeOffset.Now) - d).TotalDays;
         return days switch { <= 0 => "Listed today", 1 => "Listed yesterday", _ => $"Listed {days} days ago" };
     }
 

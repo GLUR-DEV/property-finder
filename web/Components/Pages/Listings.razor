@@ -128,7 +128,7 @@ else
                                 </ul>
                                 <p class="small">
                                     @if (!string.IsNullOrEmpty(l.AvailableFrom)) { <text>Available @l.AvailableFrom. </text> }
-                                    @Format.Ago(l.Listed)
+                                    @Format.Ago(l.Listed, result.SearchedAt)
                                 </p>
                                 <p class="links" @onclick="NoOp" @onclick:stopPropagation>
                                     <a href="@l.TradeMeUrl" target="_blank" rel="noopener">Open on Trade Me</a>

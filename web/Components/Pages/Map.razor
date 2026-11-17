@@ -194,6 +194,9 @@ else
     private string? pushed;     // the filters the markers on the map were last drawn for
     private bool disposed;
 
+    /// <summary>Ages and availability are measured from when the search ran, as on the Statistics page.</summary>
+    private DateTimeOffset AsOf => result?.SearchedAt ?? DateTimeOffset.Now;
+
     private sealed record Marker(long Id, double Lat, double Lng, string Color, string Popup);
 
     /// <summary>
@@ -280,12 +283,12 @@ else
             [("Agency", Categories[0]), ("Private landlord", Categories[1])],
             l => HasAgency(l) ? 0 : 1),
         "available" => Binned(
-            l => l.AvailableDate is { } d ? (d.Date - DateTime.Today).TotalDays : null,
+            l => l.AvailableDate is { } d ? (d.Date - AsOf.Date).TotalDays : null,
             [1, 15, 31],
             ["Available now", "Within 2 weeks", "Within a month", "Later"],
             BluesHighToLow, "No date"),
         "age" => Binned(
-            l => l.Listed is { } d ? (DateTimeOffset.Now - d).TotalDays : null,
+            l => l.Listed is { } d ? (AsOf - d).TotalDays : null,
             [2, 8, 15, 31],
             ["Today or yesterday", "2–7 days", "8–14 days", "15–30 days", "Over 30 days"],
             BluesHighToLow, "Unknown"),
@@ -392,10 +395,10 @@ else
             l.GeographicLocation!.Latitude,
             l.GeographicLocation.Longitude,
             scheme.Colour?.Invoke(l) ?? scheme.Classes[scheme.Classify(l)].Color,
-            Popup(l))).ToList();
+            Popup(l, AsOf))).ToList();
     }
 
-    private static string Popup(Listing l)
+    private static string Popup(Listing l, DateTimeOffset asOf)
     {
         static string E(string? s) => WebUtility.HtmlEncode(s ?? "");
 
@@ -417,7 +420,7 @@ else
         var when = string.Join(" ", new[]
         {
             string.IsNullOrEmpty(l.AvailableFrom) ? "" : $"Available {l.AvailableFrom}.",
-            Format.Ago(l.Listed),
+            Format.Ago(l.Listed, asOf),
         }.Where(s => s != ""));
         if (when != "") sb.Append($"<p class=\"pop-sm\">{E(when)}</p>");
 
