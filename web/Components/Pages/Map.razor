@@ -1,0 +1,489 @@
+@page "/map"
+@using System.Net
+@using System.Text
+@using Microsoft.JSInterop
+@implements IAsyncDisposable
+@inject ApiClient Api
+@inject IJSRuntime JS
+
+<PageTitle>Map</PageTitle>
+
+@if (error is not null)
+{
+    <div class="notice error">@error</div>
+}
+else if (result is null)
+{
+    <p class="muted">Loading listings…</p>
+}
+else if (result.Listings.Count == 0)
+{
+    <div class="empty">
+        <h1>No listings yet</h1>
+        <p>Run a search and the results will be plotted here.</p>
+        <a class="button" href="search">Start a search</a>
+    </div>
+}
+else
+{
+    var shown = Filtered();
+    var onMap = shown.Where(HasLocation).ToList();
+    var scheme = BuildScheme(onMap);
+    var counts = new int[scheme.Classes.Count];
+    foreach (var l in onMap)
+    {
+        var slot = scheme.Classify(l);
+        if (slot >= 0) counts[slot]++;
+    }
+    var noLocation = shown.Count - onMap.Count;
+
+    <div class="maplayout">
+        <aside class="filters mapfilters">
+            <h2>Colour markers by</h2>
+            <label class="sr-only" for="color-by">Colour markers by</label>
+            <select id="color-by" @bind="colorBy">
+                <option value="rent">Rent per week</option>
+                <option value="type">Property type</option>
+                <option value="beds">Bedrooms</option>
+                <option value="landlord">Agency or private</option>
+                <option value="available">Availability date</option>
+                <option value="age">Days listed</option>
+                <option value="suburb">Suburb</option>
+            </select>
+
+            @if (scheme.Bar is { } bar)
+            {
+                <div class="gradient" style="background:@bar.Css" role="img" aria-label="Colour scale from @bar.Low to @bar.High"></div>
+                <div class="gradient-labels">
+                    <span>@bar.Low</span>
+                    <span>@bar.Mid</span>
+                    <span>@bar.High</span>
+                </div>
+                <p class="muted small hint">Rescaled to the rents on the map right now. The middle value is the median.</p>
+            }
+
+            <ul class="key" aria-label="Colour key">
+                @for (var i = 0; i < scheme.Classes.Count; i++)
+                {
+                    if (counts[i] == 0) { continue; }
+                    var item = scheme.Classes[i];
+                    <li>
+                        <span class="swatch" style="background-color:@item.Color"></span>
+                        <span>@item.Label</span>
+                        <span class="count">@counts[i]</span>
+                    </li>
+                }
+            </ul>
+
+            <h2>Filter</h2>
+
+            <label>Search
+                <input type="search" placeholder="Street, suburb or agency" @bind="text" @bind:event="oninput" />
+            </label>
+
+            <label>Suburb
+                <select @bind="suburb">
+                    <option value="">All suburbs</option>
+                    @foreach (var s in suburbs)
+                    {
+                        <option value="@s">@s</option>
+                    }
+                </select>
+            </label>
+
+            <label>Property type
+                <select @bind="propertyType">
+                    <option value="">Any type</option>
+                    @foreach (var t in types)
+                    {
+                        <option value="@t">@t</option>
+                    }
+                </select>
+            </label>
+
+            <div class="pair">
+                <label>Min rent
+                    <input type="number" min="0" placeholder="$" @bind="minPrice" />
+                </label>
+                <label>Max rent
+                    <input type="number" min="0" placeholder="$" @bind="maxPrice" />
+                </label>
+            </div>
+
+            <div class="pair">
+                <label>Bedrooms at least
+                    <input type="number" min="0" max="6" @bind="minBeds" />
+                </label>
+                <label>Bathrooms at least
+                    <input type="number" min="0" max="6" @bind="minBaths" />
+                </label>
+            </div>
+
+            <label>Available by
+                <input type="date" @bind="availableBy" />
+            </label>
+            <p class="muted small hint">Listings with no available date count as available now.</p>
+
+            <label>Landlord
+                <select @bind="landlord">
+                    <option value="">Agency or private</option>
+                    <option value="agency">Agencies only</option>
+                    <option value="private">Private landlords only</option>
+                </select>
+            </label>
+
+            <button class="link" @onclick="Reset">Clear filters</button>
+        </aside>
+
+        <section>
+            <div class="toolbar">
+                <div>
+                    <h1>@onMap.Count on the map</h1>
+                    <p class="muted">
+                        @shown.Count of @result.Listings.Count listings match.
+                        @if (noLocation > 0)
+                        {
+                            <text>@noLocation of them have no location and aren't shown. </text>
+                        }
+                        @if (result.SearchedAt is { } at)
+                        {
+                            <text>Searched @at.ToLocalTime().ToString("d MMM yyyy, h:mm tt").</text>
+                        }
+                    </p>
+                </div>
+                <div class="controls">
+                    <button class="button" @onclick="ZoomToResults" disabled="@(jsError is not null || onMap.Count == 0)">Zoom to results</button>
+                </div>
+            </div>
+
+            @if (jsError is not null)
+            {
+                <div class="notice error">@jsError</div>
+            }
+            else
+            {
+                if (shown.Count == 0)
+                {
+                    <p class="muted">Nothing matches these filters.</p>
+                }
+                <div class="listing-map" role="region" aria-label="Map of listings" @ref="mapElement"></div>
+            }
+        </section>
+    </div>
+}
+
+@code {
+    private ListingsResult? result;
+    private string? error;
+    private List<string> suburbs = [];
+    private List<string> types = [];
+
+    private string text = "";
+    private string suburb = "";
+    private string propertyType = "";
+    private int? minPrice, maxPrice, minBeds, minBaths;
+    private DateTime? availableBy;
+    private string landlord = "";
+    private string colorBy = "rent";
+
+    private ElementReference mapElement;
+    private IJSObjectReference? js;
+    private bool mapStarting;
+    private bool fitted;
+    private string? jsError;
+    private string? pushed;     // the filters the markers on the map were last drawn for
+    private bool disposed;
+
+    private sealed record Marker(long Id, double Lat, double Lng, string Color, string Popup);
+
+    /// <summary>
+    /// How markers are coloured. Classes are the key entries; Classify says which one a listing belongs to
+    /// (-1 for none). When Colour is set it picks the marker colour instead (a continuous scale), and
+    /// Bar describes the gradient shown in the key.
+    /// </summary>
+    private sealed record Scheme(
+        List<(string Label, string Color)> Classes,
+        Func<Listing, int> Classify,
+        Func<Listing, string>? Colour = null,
+        Bar? Bar = null);
+
+    private sealed record Bar(string Css, string Low, string Mid, string High);
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            result = await Api.GetListingsAsync();
+            suburbs = result.Listings.Select(l => l.Suburb).OfType<string>().Where(s => s != "").Distinct().Order().ToList();
+            types = result.Listings.Select(l => l.PropertyType).OfType<string>().Where(s => s != "").Distinct().Order().ToList();
+        }
+        catch (ApiException ex)
+        {
+            error = ex.Message;
+        }
+    }
+
+    // ---- filtering ------------------------------------------------------
+
+    private static bool HasLocation(Listing l) =>
+        l.GeographicLocation is { } g && !(g.Latitude == 0 && g.Longitude == 0);
+
+    private static bool HasAgency(Listing l) => !string.IsNullOrWhiteSpace(l.Agency?.Name);
+
+    private List<Listing> Filtered()
+    {
+        var q = result!.Listings.AsEnumerable();
+        if (!string.IsNullOrWhiteSpace(text))
+        {
+            var needle = text.Trim();
+            q = q.Where(l => $"{l.Title} {l.Address} {l.Suburb} {l.Agency?.Name}"
+                .Contains(needle, StringComparison.OrdinalIgnoreCase));
+        }
+        if (suburb != "") q = q.Where(l => l.Suburb == suburb);
+        if (propertyType != "") q = q.Where(l => l.PropertyType == propertyType);
+        if (minPrice is { } lo) q = q.Where(l => l.RentPerWeek >= lo);
+        if (maxPrice is { } hi) q = q.Where(l => l.RentPerWeek <= hi);
+        if (minBeds is { } beds) q = q.Where(l => l.Bedrooms >= beds);
+        if (minBaths is { } baths) q = q.Where(l => l.Bathrooms >= baths);
+        if (availableBy is { } by) q = q.Where(l => l.AvailableDate is not { } d || d.Date <= by.Date);
+        if (landlord == "agency") q = q.Where(HasAgency);
+        if (landlord == "private") q = q.Where(l => !HasAgency(l));
+        return q.ToList();
+    }
+
+    private void Reset()
+    {
+        text = suburb = propertyType = landlord = "";
+        minPrice = maxPrice = minBeds = minBaths = null;
+        availableBy = null;
+    }
+
+    // ---- colour schemes -------------------------------------------------
+    // Rent is a continuous scale fitted to the listings on the map now, so it uses its whole
+    // range however tightly you filter. The other schemes have meaningful fixed groups (bedrooms,
+    // dates) or categories taken from every listing, so a marker keeps its colour as you filter.
+
+    private const string Grey = "#8a9a9e";
+    private static readonly string[] RentStops = ["#ffe680", "#fed976", "#feb24c", "#fd8d3c", "#f03b20", "#bd0026", "#800026"]; // low to high
+    private static readonly string[] BluesLowToHigh = ["#c6dbef", "#9ecae1", "#6baed6", "#3182bd", "#08519c"];
+    private static readonly string[] BluesHighToLow = ["#08519c", "#3182bd", "#6baed6", "#9ecae1", "#c6dbef"];
+    private static readonly string[] Categories =
+        ["#0072B2", "#E69F00", "#009E73", "#D55E00", "#CC79A7", "#56B4E9", "#F0E442"];                    // colour-blind safe
+
+    private Scheme BuildScheme(List<Listing> visible) => colorBy switch
+    {
+        "type" => Categorical(l => l.PropertyType, "No type"),
+        "suburb" => Categorical(l => l.Suburb, "No suburb"),
+        "beds" => Binned(l => l.Bedrooms, [1, 2, 3, 4],
+            ["Studio", "1 bed", "2 beds", "3 beds", "4+ beds"], BluesLowToHigh, "Unknown"),
+        "landlord" => new Scheme(
+            [("Agency", Categories[0]), ("Private landlord", Categories[1])],
+            l => HasAgency(l) ? 0 : 1),
+        "available" => Binned(
+            l => l.AvailableDate is { } d ? (d.Date - DateTime.Today).TotalDays : null,
+            [1, 15, 31],
+            ["Available now", "Within 2 weeks", "Within a month", "Later"],
+            BluesHighToLow, "No date"),
+        "age" => Binned(
+            l => l.Listed is { } d ? (DateTimeOffset.Now - d).TotalDays : null,
+            [2, 8, 15, 31],
+            ["Today or yesterday", "2–7 days", "8–14 days", "15–30 days", "Over 30 days"],
+            BluesHighToLow, "Unknown"),
+        _ => RentScheme(visible),
+    };
+
+    /// <summary>
+    /// Colour runs smoothly from the cheapest to the dearest rent on the map. With 20 or more
+    /// priced listings the cheapest and dearest 5% are clamped to the end colours, so a few
+    /// extremes don't squash everyone else into one shade.
+    /// </summary>
+    private static Scheme RentScheme(List<Listing> visible)
+    {
+        var prices = visible.Where(l => l.RentPerWeek.HasValue)
+            .Select(l => (double)l.RentPerWeek!.Value).Order().ToList();
+        List<(string Label, string Color)> noPrice = [("No price", Grey)];
+        if (prices.Count == 0) return new Scheme(noPrice, _ => 0);
+
+        var trim = prices.Count >= 20;
+        var lo = trim ? Quantile(prices, 0.05) : prices[0];
+        var hi = trim ? Quantile(prices, 0.95) : prices[^1];
+
+        // Everything costs about the same: one colour and one key entry
+        if (hi - lo < 1)
+        {
+            List<(string Label, string Color)> same = [($"${prices[0]:0} a week", RentStops[3]), ("No price", Grey)];
+            return new Scheme(same, l => l.RentPerWeek.HasValue ? 0 : 1);
+        }
+
+        var low = $"${lo:0}" + (prices[0] < lo ? " or less" : "");
+        var mid = $"${Quantile(prices, 0.5):0}";
+        var high = $"${hi:0}" + (prices[^1] > hi ? " or more" : "");
+        var bar = new Bar("linear-gradient(to right, " + string.Join(", ", RentStops) + ")", low, mid, high);
+
+        return new Scheme(
+            noPrice,
+            l => l.RentPerWeek.HasValue ? -1 : 0,
+            l => l.RentPerWeek is { } r ? Blend(RentStops, ((double)r - lo) / (hi - lo)) : Grey,
+            bar);
+    }
+
+    private static double Quantile(List<double> sorted, double q) =>
+        sorted[(int)Math.Min(sorted.Count - 1, Math.Floor(q * sorted.Count))];
+
+    /// <summary>The colour a fraction (0 to 1) of the way along evenly spaced hex colour stops.</summary>
+    private static string Blend(string[] stops, double fraction)
+    {
+        var position = Math.Clamp(fraction, 0, 1) * (stops.Length - 1);
+        var index = Math.Min((int)Math.Floor(position), stops.Length - 2);
+        var within = position - index;
+        var startColour = stops[index];
+        var endColour = stops[index + 1];
+
+        int Channel(string hex, int n) => Convert.ToInt32(hex.Substring(1 + n * 2, 2), 16);
+        int Mix(int n) => (int)Math.Round(Channel(startColour, n) + (Channel(endColour, n) - Channel(startColour, n)) * within);
+
+        return $"#{Mix(0):x2}{Mix(1):x2}{Mix(2):x2}";
+    }
+
+    /// <summary>Groups by ascending edges: a value falls in the class after every edge it has reached.</summary>
+    private static Scheme Binned(Func<Listing, double?> value, double[] edges, string[] labels, string[] colors, string missingLabel)
+    {
+        var classes = labels.Zip(colors, (label, color) => (Label: label, Color: color)).ToList();
+        classes.Add((missingLabel, Grey));
+        return new Scheme(classes, l => value(l) is { } v ? edges.Count(e => e <= v) : classes.Count - 1);
+    }
+
+    /// <summary>The most common values each get a colour; everything else is "Other".</summary>
+    private Scheme Categorical(Func<Listing, string?> pick, string missingLabel)
+    {
+        var values = result!.Listings.Select(pick).Where(s => !string.IsNullOrWhiteSpace(s)).Select(s => s!).ToList();
+        var top = values.GroupBy(s => s)
+            .OrderByDescending(g => g.Count()).ThenBy(g => g.Key)
+            .Take(Categories.Length).Select(g => g.Key).ToList();
+
+        var classes = top.Select((name, i) => (Label: name, Color: Categories[i])).ToList();
+        var index = top.Select((name, i) => (name, i)).ToDictionary(p => p.name, p => p.i);
+
+        var otherIndex = -1;
+        if (values.Distinct().Count() > top.Count)
+        {
+            otherIndex = classes.Count;
+            classes.Add(("Other", Grey));
+        }
+        var missingIndex = classes.Count;
+        classes.Add((missingLabel, Grey));
+
+        return new Scheme(classes, l =>
+        {
+            var v = pick(l);
+            if (string.IsNullOrWhiteSpace(v)) return missingIndex;
+            return index.TryGetValue(v, out var i) ? i : otherIndex;
+        });
+    }
+
+    // ---- map ------------------------------------------------------------
+
+    private List<Marker> BuildMarkers()
+    {
+        var visible = Filtered().Where(HasLocation).ToList();
+        var scheme = BuildScheme(visible);
+        return visible.Select(l => new Marker(
+            l.ListingId,
+            l.GeographicLocation!.Latitude,
+            l.GeographicLocation.Longitude,
+            scheme.Colour?.Invoke(l) ?? scheme.Classes[scheme.Classify(l)].Color,
+            Popup(l))).ToList();
+    }
+
+    private static string Popup(Listing l)
+    {
+        static string E(string? s) => WebUtility.HtmlEncode(s ?? "");
+
+        var sb = new StringBuilder("<div class=\"pop\">");
+        if (l.PictureHref is { } picture && picture.StartsWith("http", StringComparison.OrdinalIgnoreCase))
+            sb.Append($"<img src=\"{E(picture)}\" alt=\"\" />");
+
+        var perWeek = l.RentPerWeek.HasValue ? " per week" : "";
+        sb.Append($"<p class=\"pop-rent\"><strong>{E(Format.Rent(l))}</strong>{perWeek}</p>");
+        sb.Append($"<p class=\"pop-addr\">{E(l.Address ?? l.Title)}</p>");
+
+        var place = string.Join(", ", new[] { l.Suburb, l.District }.Where(s => !string.IsNullOrEmpty(s)));
+        if (place != "") sb.Append($"<p class=\"pop-sub\">{E(place)}</p>");
+
+        var facts = string.Join(" · ", new[] { Format.Beds(l.Bedrooms), Format.Baths(l.Bathrooms), l.PropertyType }
+            .Where(s => !string.IsNullOrEmpty(s)));
+        if (facts != "") sb.Append($"<p>{E(facts)}</p>");
+
+        var when = string.Join(" ", new[]
+        {
+            string.IsNullOrEmpty(l.AvailableFrom) ? "" : $"Available {l.AvailableFrom}.",
+            Format.Ago(l.Listed),
+        }.Where(s => s != ""));
+        if (when != "") sb.Append($"<p class=\"pop-sm\">{E(when)}</p>");
+
+        if (l.TradeMeUrl != "")
+            sb.Append($"<p><a href=\"{E(l.TradeMeUrl)}\" target=\"_blank\" rel=\"noopener\">Open on Trade Me</a></p>");
+
+        return sb.Append("</div>").ToString();
+    }
+
+    /// <summary>Everything the markers depend on; the map is redrawn only when this changes.</summary>
+    private string Signature() => string.Join('|', text, suburb, propertyType, minPrice, maxPrice,
+        minBeds, minBaths, availableBy?.ToString("yyyy-MM-dd"), landlord, colorBy);
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (disposed || result is null || result.Listings.Count == 0 || jsError is not null) return;
+
+        try
+        {
+            if (js is null)
+            {
+                if (mapStarting) return;
+                mapStarting = true;
+                js = await JS.InvokeAsync<IJSObjectReference>("import", "./map.js");
+                if (!await js.InvokeAsync<bool>("init", mapElement))
+                {
+                    jsError = "The map library didn't load. Leaflet and the map tiles come from the internet, so check your connection and reload.";
+                    StateHasChanged();
+                    return;
+                }
+            }
+
+            var signature = Signature();
+            if (signature == pushed) return;
+            pushed = signature;
+
+            await js.InvokeVoidAsync("setMarkers", BuildMarkers(), !fitted);
+            fitted = true;
+        }
+        catch (JSDisconnectedException)
+        {
+            // The browser tab went away; nothing to draw on
+        }
+        catch (JSException ex)
+        {
+            jsError = $"The map couldn't be drawn: {ex.Message}";
+            StateHasChanged();
+        }
+    }
+
+    private async Task ZoomToResults()
+    {
+        if (js is null) return;
+        try { await js.InvokeVoidAsync("fit"); }
+        catch (JSDisconnectedException) { }
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        disposed = true;
+        if (js is null) return;
+        try
+        {
+            await js.InvokeVoidAsync("dispose");
+            await js.DisposeAsync();
+        }
+        catch (JSDisconnectedException) { }
+    }
+}
