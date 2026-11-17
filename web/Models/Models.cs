@@ -32,6 +32,53 @@ public class SearchRequest
     public List<string> PropertyTypes { get; set; } = [];
 }
 
+// ---- watches and notifications ---------------------------------------
+
+public class WatchRequest : SearchRequest
+{
+    public string Name { get; set; } = "";
+    public int IntervalMinutes { get; set; } = 60;
+    public bool Enabled { get; set; } = true;
+    public bool Notify { get; set; } = true;
+}
+
+public class WatchDto
+{
+    public int Id { get; set; }
+    public string Name { get; set; } = "";
+    public string Label { get; set; } = "";
+    public bool Enabled { get; set; }
+    public bool Notify { get; set; }
+    public int IntervalMinutes { get; set; }
+    public string Region { get; set; } = "";
+    public string District { get; set; } = "";
+    public List<string> SuburbIds { get; set; } = [];
+    public int? PriceMin { get; set; }
+    public int? PriceMax { get; set; }
+    public int? BedroomsMin { get; set; }
+    public int? BedroomsMax { get; set; }
+    public int? BathroomsMin { get; set; }
+    public int? BathroomsMax { get; set; }
+    public List<string> PropertyTypes { get; set; } = [];
+    public bool UseWindow { get; set; }
+    public bool Baselined { get; set; }
+    public bool Running { get; set; }
+    public string? LastStatus { get; set; }      // ok | warning | error
+    public string? LastMessage { get; set; }
+    public DateTimeOffset? LastRunAt { get; set; }
+    public DateTimeOffset? NextRunAt { get; set; }
+}
+
+public record NotifyDto(string Server, string Topic, bool HasToken, bool Configured);
+
+/// <summary>Token: null keeps the saved one, an empty string removes it.</summary>
+public class NotifyRequest
+{
+    public string Server { get; set; } = "";
+    public string Topic { get; set; } = "";
+    public string? Token { get; set; }
+}
+
 // ---- listings (a subset of the fields Trade Me returns) --------------
 
 /// <summary>The API's response before the listings are turned into <see cref="Listing"/> objects.</summary>

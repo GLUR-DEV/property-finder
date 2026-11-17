@@ -91,13 +91,14 @@ def with_page(url: str, number: int) -> str:
 
 # ----------------------------------------------------------- listings
 
-def fetch_listings(url: str, progress: Progress) -> list[dict]:
-    """Walk the results pages for a search URL until a page adds nothing new."""
+def fetch_listings(url: str, progress: Progress, headless: bool | None = None) -> list[dict]:
+    """Walk the results pages for a search URL until a page adds nothing new.
+    headless overrides the HEADLESS setting for this one scrape."""
     collected: list[dict] = []
     seen: set[str] = set()
 
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=config.HEADLESS)
+        browser = p.chromium.launch(headless=config.HEADLESS if headless is None else headless)
         try:
             page = browser.new_page()
             for number in range(1, config.MAX_PAGES + 1):

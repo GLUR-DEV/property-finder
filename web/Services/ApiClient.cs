@@ -63,12 +63,53 @@ public class ApiClient(HttpClient http)
         return job;
     }
 
+    // ---- watches and notifications -----------------------------------
+
+    public async Task<List<WatchDto>> GetWatchesAsync() =>
+        await GetAsync<List<WatchDto>>("api/watches") ?? [];
+
+    public Task<WatchDto> CreateWatchAsync(WatchRequest request) =>
+        RequestAsync<WatchDto>(HttpMethod.Post, "api/watches", request);
+
+    public Task<WatchDto> UpdateWatchAsync(int id, WatchRequest request) =>
+        RequestAsync<WatchDto>(HttpMethod.Put, $"api/watches/{id}", request);
+
+    public Task<WatchDto> SetWatchEnabledAsync(int id, bool enabled) =>
+        RequestAsync<WatchDto>(HttpMethod.Patch, $"api/watches/{id}/enabled", new { enabled });
+
+    public async Task DeleteWatchAsync(int id) =>
+        await SendAsync(() => http.DeleteAsync($"api/watches/{id}"));
+
+    public async Task<JobDto> RunWatchAsync(int id)
+    {
+        var response = await SendAsync(() => http.PostAsync($"api/watches/{id}/run", null));
+        return await response.Content.ReadFromJsonAsync<JobDto>()
+               ?? throw new ApiException("The API returned an empty response.");
+    }
+
+    public async Task<NotifyDto> GetNotificationsAsync() =>
+        await GetAsync<NotifyDto>("api/notifications") ?? new NotifyDto("", "", false, false);
+
+    public Task<NotifyDto> SaveNotificationsAsync(NotifyRequest request) =>
+        RequestAsync<NotifyDto>(HttpMethod.Put, "api/notifications", request);
+
+    public async Task SendTestNotificationAsync() =>
+        await SendAsync(() => http.PostAsync("api/notifications/test", null));
+
     // ---- plumbing ----------------------------------------------------
 
     private async Task<T?> GetAsync<T>(string url)
     {
         var response = await SendAsync(() => http.GetAsync(url));
         return await response.Content.ReadFromJsonAsync<T>();
+    }
+
+    private async Task<T> RequestAsync<T>(HttpMethod method, string url, object body)
+    {
+        var response = await SendAsync(() => http.SendAsync(
+            new HttpRequestMessage(method, url) { Content = JsonContent.Create(body, body.GetType()) }));
+        return await response.Content.ReadFromJsonAsync<T>()
+               ?? throw new ApiException("The API returned an empty response.");
     }
 
     private async Task<JobDto> PostAsync<TBody>(string url, TBody body)

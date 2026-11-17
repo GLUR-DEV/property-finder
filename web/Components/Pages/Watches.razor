@@ -1,0 +1,600 @@
+@page "/watches"
+@using System.Security.Cryptography
+@implements IDisposable
+@inject ApiClient Api
+
+<PageTitle>Watches</PageTitle>
+
+<div class="narrow">
+    <h1>Watches</h1>
+    <p class="muted">
+        A watch re-runs a search on a schedule and sends any new listing to your phone. It runs inside the
+        API, so <code>python run.py</code> has to stay running on this PC, and the PC has to stay awake.
+    </p>
+
+    @if (loadError is not null)
+    {
+        <div class="notice error">@loadError</div>
+    }
+
+    @* ---------------------------------------------------- phone notifications *@
+    <h2>Phone notifications</h2>
+    <p class="muted small">
+        Install the free <strong>ntfy</strong> app on your phone and subscribe to the topic below. On the public
+        ntfy.sh server anyone who knows a topic can read it, so keep it random.
+    </p>
+    <fieldset disabled="@settingsBusy">
+        <label>Topic
+            <input type="text" @bind="topic" placeholder="e.g. rental-3f9a1c2b7d" autocomplete="off" />
+        </label>
+        <details>
+            <summary>Server and access token</summary>
+            <div class="pair">
+                <label>Server <input type="text" @bind="server" /></label>
+                <label>Access token (optional)
+                    <input type="password" @bind="token" autocomplete="off"
+                           placeholder="@(saved?.HasToken == true ? "Saved. Leave blank to keep it" : "Only for a protected server")" />
+                </label>
+            </div>
+            @if (saved?.HasToken == true)
+            {
+                <button class="link" @onclick="RemoveTokenAsync">Remove the saved token</button>
+            }
+        </details>
+        <div class="actions row">
+            <button class="button" @onclick="SaveSettingsAsync">Save</button>
+            <button class="button secondary" @onclick="NewTopic">Generate a random topic</button>
+            <button class="button secondary" disabled="@(string.IsNullOrWhiteSpace(topic))" @onclick="TestAsync">Save and send a test</button>
+        </div>
+    </fieldset>
+    @if (settingsError is not null)
+    {
+        <div class="notice error">@settingsError</div>
+    }
+    @if (settingsNotice is not null)
+    {
+        <div class="notice">@settingsNotice</div>
+    }
+
+    @* ------------------------------------------------------------ watch list *@
+    <div class="section-head">
+        <h2>Your watches</h2>
+        @if (form is null && locations is { Count: > 0 })
+        {
+            <button class="button" @onclick="NewWatch">New watch</button>
+        }
+    </div>
+
+    @if (error is not null)
+    {
+        <div class="notice error">@error</div>
+    }
+    @if (notice is not null)
+    {
+        <div class="notice">@notice</div>
+    }
+    @if (runJob is not null && busy)
+    {
+        <div class="notice">
+            <strong>@runJob.Message</strong>
+            <span class="muted"> — @runJob.Count listings so far.</span>
+        </div>
+    }
+
+    @if (watches is null)
+    {
+        <p class="muted">Loading watches…</p>
+    }
+    else if (watches.Count == 0 && form is null)
+    {
+        <div class="empty">
+            @if (locations is { Count: 0 })
+            {
+                <p>No suburbs are saved yet. Add a region and district first.</p>
+                <a class="button" href="locations">Add locations</a>
+            }
+            else
+            {
+                <p>No watches yet. Create one and it will start with the first run, which saves what is on the market now.</p>
+            }
+        </div>
+    }
+
+    @if (watches is not null)
+    {
+        foreach (var w in watches)
+        {
+            <div class="watch">
+                <div class="watch-head">
+                    <h3>@w.Name</h3>
+                    <span class="badge @StatusClass(w)">@StatusText(w)</span>
+                </div>
+                <p class="muted small">@w.Label. Every @IntervalText(w.IntervalMinutes)@(w.Notify ? "" : ", notifications off").</p>
+                <p class="small">@LastRunText(w)</p>
+                @if (w.Enabled && !w.Running)
+                {
+                    <p class="muted small">@NextRunText(w)</p>
+                }
+                @if (w.UseWindow)
+                {
+                    <p class="muted small">Opens a browser window on each run, because Trade Me blocked headless mode.</p>
+                }
+                <div class="watch-actions">
+                    <button class="link" disabled="@busy" @onclick="() => DoAsync(() => RunNowAsync(w))">Run now</button>
+                    <button class="link" disabled="@busy" @onclick="() => DoAsync(() => ToggleAsync(w))">@(w.Enabled ? "Pause" : "Resume")</button>
+                    <button class="link" disabled="@busy" @onclick="() => Edit(w)">Edit</button>
+                    <button class="link" disabled="@busy" @onclick="() => DoAsync(() => DeleteAsync(w))">@(confirmDelete == w.Id ? "Click again to delete" : "Delete")</button>
+                </div>
+            </div>
+        }
+    }
+
+    @* ------------------------------------------------------------- watch form *@
+    @if (form is not null && locations is not null)
+    {
+        <div class="form-panel">
+            <h2>@(editId is null ? "New watch" : "Edit watch")</h2>
+            <fieldset disabled="@busy">
+                <label>Name
+                    <input type="text" @bind="form.Name" maxlength="60" placeholder="e.g. Papatoetoe 3 bed under $700" />
+                </label>
+
+                <div class="pair" style="margin-top: .75rem">
+                    <label>Check every
+                        <input type="number" min="1" @bind="intervalValue" />
+                    </label>
+                    <label>Unit
+                        <select @bind="intervalUnit">
+                            <option value="minutes">minutes</option>
+                            <option value="hours">hours</option>
+                        </select>
+                    </label>
+                </div>
+                <p class="muted small">At least @MinMinutes minutes. A run reads every results page, so it takes as long as a normal search.</p>
+
+                <div class="pair">
+                    <label>Region
+                        <select @bind="region" @bind:after="RegionChanged">
+                            @foreach (var r in locations)
+                            {
+                                <option value="@r.Region">@Format.Pretty(r.Region)</option>
+                            }
+                        </select>
+                    </label>
+                    <label>District
+                        <select @bind="district" @bind:after="DistrictChanged">
+                            @foreach (var d in Districts)
+                            {
+                                <option value="@d.District">@Format.Pretty(d.District)</option>
+                            }
+                        </select>
+                    </label>
+                </div>
+
+                <div class="section-head">
+                    <h2>Suburbs</h2>
+                    <span class="muted">@chosen.Count of @Suburbs.Count selected</span>
+                    <button class="link" @onclick="SelectAll">Select all</button>
+                    <button class="link" @onclick="chosen.Clear">Clear</button>
+                </div>
+                <div class="checks">
+                    @foreach (var s in Suburbs)
+                    {
+                        <label class="check">
+                            <input type="checkbox" checked="@chosen.Contains(s.Id)"
+                                   @onchange="e => Toggle(s.Id, e.Value is true)" />
+                            @s.Name
+                        </label>
+                    }
+                </div>
+
+                <h2>Filters</h2>
+                <div class="trio">
+                    <label>Min rent a week <input type="number" min="0" @bind="form.PriceMin" /></label>
+                    <label>Max rent a week <input type="number" min="0" @bind="form.PriceMax" /></label>
+                    <span></span>
+                    <label>Min bedrooms <input type="number" min="0" max="6" @bind="form.BedroomsMin" /></label>
+                    <label>Max bedrooms <input type="number" min="0" max="6" @bind="form.BedroomsMax" /></label>
+                    <span></span>
+                    <label>Min bathrooms <input type="number" min="0" max="6" @bind="form.BathroomsMin" /></label>
+                    <label>Max bathrooms <input type="number" min="0" max="6" @bind="form.BathroomsMax" /></label>
+                    <span></span>
+                </div>
+                <div class="checks">
+                    @foreach (var (value, label) in PropertyTypes)
+                    {
+                        <label class="check">
+                            <input type="checkbox" checked="@types.Contains(value)"
+                                   @onchange="e => ToggleType(value, e.Value is true)" />
+                            @label
+                        </label>
+                    }
+                </div>
+                <p class="muted small">Leave a filter blank to skip it. With no property type ticked, every type is included.</p>
+
+                <label class="check" style="margin-top: .75rem">
+                    <input type="checkbox" @bind="form.Notify" /> Send new listings to my phone
+                </label>
+                @if (editId is not null)
+                {
+                    <p class="muted small">Changing the suburbs or filters starts the watch over: its next run saves what is on the market then, without notifying you.</p>
+                }
+            </fieldset>
+
+            @if (formError is not null)
+            {
+                <div class="notice error">@formError</div>
+            }
+            <div class="actions row">
+                <button class="button" disabled="@busy" @onclick="() => DoAsync(SaveWatchAsync)">@(editId is null ? "Create watch" : "Save changes")</button>
+                <button class="button secondary" disabled="@busy" @onclick="CancelForm">Cancel</button>
+            </div>
+        </div>
+    }
+</div>
+
+@code {
+    private const int MinMinutes = 15; // keep in step with MIN_WATCH_MINUTES in api/config.py
+
+    private static readonly (string Value, string Label)[] PropertyTypes =
+    [
+        ("apartment", "Apartment"), ("car-park", "Car park"), ("house", "House"),
+        ("townhouse", "Townhouse"), ("unit", "Unit"),
+    ];
+
+    private readonly CancellationTokenSource cts = new();
+
+    // notification settings
+    private NotifyDto? saved;
+    private string server = "", topic = "", token = "";
+    private string? settingsError, settingsNotice;
+    private bool settingsBusy;
+
+    // watches
+    private List<WatchDto>? watches;
+    private List<RegionDto>? locations;
+    private string? loadError, error, notice;
+    private bool busy;
+    private JobDto? runJob;
+    private int? confirmDelete;
+
+    // the add / edit form
+    private WatchRequest? form;
+    private int? editId;
+    private string? formError;
+    private string region = "", district = "", intervalUnit = "minutes";
+    private int intervalValue = 30;
+    private readonly HashSet<string> chosen = [];
+    private readonly HashSet<string> types = [];
+
+    private List<DistrictDto> Districts =>
+        locations?.FirstOrDefault(r => r.Region == region)?.Districts ?? [];
+
+    private List<SuburbDto> Suburbs =>
+        Districts.FirstOrDefault(d => d.District == district)?.Suburbs ?? [];
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            locations = await Api.GetLocationsAsync();
+            saved = await Api.GetNotificationsAsync();
+            server = saved.Server;
+            topic = saved.Topic;
+            watches = await Api.GetWatchesAsync();
+        }
+        catch (ApiException ex)
+        {
+            loadError = ex.Message;
+            watches ??= [];
+        }
+    }
+
+    protected override void OnAfterRender(bool firstRender)
+    {
+        if (firstRender) _ = PollAsync();
+    }
+
+    /// <summary>Refresh the list every few seconds so scheduled runs show up without a reload.</summary>
+    private async Task PollAsync()
+    {
+        using var timer = new PeriodicTimer(TimeSpan.FromSeconds(5));
+        try
+        {
+            while (await timer.WaitForNextTickAsync(cts.Token))
+            {
+                if (busy) continue;
+                await RefreshAsync();
+                await InvokeAsync(StateHasChanged);
+            }
+        }
+        catch (OperationCanceledException) { }
+        catch (ObjectDisposedException) { }
+    }
+
+    private async Task RefreshAsync()
+    {
+        try
+        {
+            watches = await Api.GetWatchesAsync();
+        }
+        catch (ApiException) { } // keep showing the last list if the API blips
+    }
+
+    public void Dispose()
+    {
+        cts.Cancel();
+        cts.Dispose();
+    }
+
+    // ---- notification settings --------------------------------------
+
+    private async Task<bool> SaveAsync()
+    {
+        settingsError = settingsNotice = null;
+        settingsBusy = true;
+        try
+        {
+            saved = await Api.SaveNotificationsAsync(new NotifyRequest
+            {
+                Server = server,
+                Topic = topic,
+                Token = string.IsNullOrWhiteSpace(token) ? null : token,
+            });
+            server = saved.Server;
+            topic = saved.Topic;
+            token = "";
+            return true;
+        }
+        catch (ApiException ex)
+        {
+            settingsError = ex.Message;
+            return false;
+        }
+        finally
+        {
+            settingsBusy = false;
+        }
+    }
+
+    private async Task SaveSettingsAsync()
+    {
+        if (await SaveAsync()) settingsNotice = "Saved.";
+    }
+
+    private async Task TestAsync()
+    {
+        if (!await SaveAsync()) return;
+        settingsBusy = true;
+        try
+        {
+            await Api.SendTestNotificationAsync();
+            settingsNotice = "Saved. A test notification is on its way to your phone.";
+        }
+        catch (ApiException ex)
+        {
+            settingsError = ex.Message;
+        }
+        finally
+        {
+            settingsBusy = false;
+        }
+    }
+
+    private async Task RemoveTokenAsync()
+    {
+        settingsError = settingsNotice = null;
+        try
+        {
+            saved = await Api.SaveNotificationsAsync(new NotifyRequest { Server = server, Topic = topic, Token = "" });
+            settingsNotice = "Token removed.";
+        }
+        catch (ApiException ex)
+        {
+            settingsError = ex.Message;
+        }
+    }
+
+    private void NewTopic() =>
+        topic = "rental-" + Convert.ToHexString(RandomNumberGenerator.GetBytes(10)).ToLowerInvariant();
+
+    // ---- watch actions ----------------------------------------------
+
+    /// <summary>Run an action with the buttons locked and any API error shown.</summary>
+    private async Task DoAsync(Func<Task> action)
+    {
+        error = notice = null;
+        busy = true;
+        try
+        {
+            await action();
+        }
+        catch (ApiException ex)
+        {
+            error = ex.Message;
+        }
+        finally
+        {
+            busy = false;
+            runJob = null;
+        }
+    }
+
+    private async Task RunNowAsync(WatchDto w)
+    {
+        confirmDelete = null;
+        var job = await Api.RunWatchAsync(w.Id);
+        runJob = job;
+        job = await Api.WaitForJobAsync(job, j => { runJob = j; StateHasChanged(); });
+        if (job.Failed) error = job.Error;
+        else notice = $"{w.Name}: {job.Message}";
+        await RefreshAsync();
+    }
+
+    private async Task ToggleAsync(WatchDto w)
+    {
+        confirmDelete = null;
+        await Api.SetWatchEnabledAsync(w.Id, !w.Enabled);
+        await RefreshAsync();
+    }
+
+    private async Task DeleteAsync(WatchDto w)
+    {
+        if (confirmDelete != w.Id)
+        {
+            confirmDelete = w.Id;
+            return;
+        }
+        confirmDelete = null;
+        await Api.DeleteWatchAsync(w.Id);
+        await RefreshAsync();
+    }
+
+    // ---- the form ---------------------------------------------------
+
+    private void NewWatch()
+    {
+        confirmDelete = null;
+        editId = null;
+        formError = null;
+        form = new WatchRequest();
+        chosen.Clear();
+        types.Clear();
+        intervalValue = 30;
+        intervalUnit = "minutes";
+        if (locations is { Count: > 0 })
+        {
+            region = locations[0].Region;
+            district = Districts.FirstOrDefault()?.District ?? "";
+        }
+    }
+
+    private void Edit(WatchDto w)
+    {
+        confirmDelete = null;
+        editId = w.Id;
+        formError = null;
+        form = new WatchRequest
+        {
+            Name = w.Name,
+            Enabled = w.Enabled,
+            Notify = w.Notify,
+            PriceMin = w.PriceMin,
+            PriceMax = w.PriceMax,
+            BedroomsMin = w.BedroomsMin,
+            BedroomsMax = w.BedroomsMax,
+            BathroomsMin = w.BathroomsMin,
+            BathroomsMax = w.BathroomsMax,
+        };
+        region = w.Region;
+        district = w.District;
+        chosen.Clear();
+        foreach (var id in w.SuburbIds) chosen.Add(id);
+        types.Clear();
+        foreach (var t in w.PropertyTypes) types.Add(t);
+        if (w.IntervalMinutes % 60 == 0)
+        {
+            intervalValue = w.IntervalMinutes / 60;
+            intervalUnit = "hours";
+        }
+        else
+        {
+            intervalValue = w.IntervalMinutes;
+            intervalUnit = "minutes";
+        }
+    }
+
+    private void CancelForm()
+    {
+        form = null;
+        editId = null;
+        formError = null;
+    }
+
+    private void RegionChanged()
+    {
+        district = Districts.FirstOrDefault()?.District ?? "";
+        chosen.Clear();
+    }
+
+    private void DistrictChanged() => chosen.Clear();
+
+    private void SelectAll()
+    {
+        foreach (var s in Suburbs) chosen.Add(s.Id);
+    }
+
+    private void Toggle(string id, bool on)
+    {
+        if (on) chosen.Add(id); else chosen.Remove(id);
+    }
+
+    private void ToggleType(string value, bool on)
+    {
+        if (on) types.Add(value); else types.Remove(value);
+    }
+
+    private async Task SaveWatchAsync()
+    {
+        formError = null;
+        if (form is null) return;
+
+        var minutes = intervalUnit == "hours" ? intervalValue * 60 : intervalValue;
+        if (string.IsNullOrWhiteSpace(form.Name)) formError = "Give the watch a name.";
+        else if (chosen.Count == 0) formError = "Pick at least one suburb.";
+        else if (minutes < MinMinutes) formError = $"Check at most every {MinMinutes} minutes, to go easy on Trade Me.";
+        if (formError is not null) return;
+
+        form.Region = region;
+        form.District = district;
+        form.SuburbIds = Suburbs.Where(s => chosen.Contains(s.Id)).Select(s => s.Id).ToList();
+        form.PropertyTypes = types.ToList();
+        form.IntervalMinutes = minutes;
+
+        try
+        {
+            if (editId is { } id) await Api.UpdateWatchAsync(id, form);
+            else await Api.CreateWatchAsync(form);
+        }
+        catch (ApiException ex)
+        {
+            formError = ex.Message; // keep the form open so nothing is lost
+            return;
+        }
+
+        form = null;
+        editId = null;
+        await RefreshAsync();
+    }
+
+    // ---- display ----------------------------------------------------
+
+    private static string IntervalText(int minutes) =>
+        minutes % 60 == 0
+            ? (minutes == 60 ? "hour" : $"{minutes / 60} hours")
+            : $"{minutes} minutes";
+
+    private static string StatusText(WatchDto w) =>
+        w.Running ? "Running now"
+        : !w.Enabled ? "Paused"
+        : w.LastStatus == "error" ? "Failed"
+        : w.LastStatus == "warning" ? "Needs attention"
+        : w.LastRunAt is null ? "Waiting for first run"
+        : "Active";
+
+    private static string StatusClass(WatchDto w) =>
+        w.Running || !w.Enabled || w.LastRunAt is null ? ""
+        : w.LastStatus == "error" ? "bad"
+        : w.LastStatus == "warning" ? "warn"
+        : "ok";
+
+    private static string LastRunText(WatchDto w) =>
+        w.LastRunAt is not { } at
+            ? "Hasn't run yet."
+            : $"Last run {at.ToLocalTime():d MMM, h:mm tt}. {w.LastMessage}";
+
+    private static string NextRunText(WatchDto w) =>
+        w.NextRunAt is not { } at ? ""
+        : at <= DateTimeOffset.Now ? "Next run: due now."
+        : $"Next run {at.ToLocalTime():d MMM, h:mm tt}.";
+}
