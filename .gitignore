@@ -7,3 +7,4 @@ __pycache__/
 # Scraped data (listings are rebuilt by running a search)
 api/data/response_raw.json
 api/data/page.html
+api/data/history.db

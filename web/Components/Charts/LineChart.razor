@@ -1,0 +1,101 @@
+@using System.Text
+@using static RentalFinder.Web.Services.ChartMath
+
+@if (!hasData)
+{
+    <p class="muted">Nothing to chart yet.</p>
+}
+else
+{
+    var ticks = Math.Max(1, (int)Math.Round((hi - lo) / step));
+    var skip = (int)Math.Ceiling(n / 7.0);
+
+    <svg class="chart" viewBox="0 0 @W @H" role="img" aria-label="@AriaLabel">
+        @for (var t = 0; t <= ticks; t++)
+        {
+            var value = lo + step * t;
+            <g>
+                <line class="grid" x1="@ML" x2="@(W - MR)" y1="@F(Y(value))" y2="@F(Y(value))" />
+                <text class="axis" x="@(ML - 6)" y="@F(Y(value) + 4)" text-anchor="end">@Fmt(value)</text>
+            </g>
+        }
+        @for (var i = 0; i < XLabels.Count; i++)
+        {
+            if (i % skip != 0) continue;
+            <g>
+                <text class="axis" x="@F(X(i))" y="@(H - MB + 16)" text-anchor="middle">@XLabels[i]</text>
+            </g>
+        }
+        @for (var s = 0; s < Lines.Count; s++)
+        {
+            var series = Lines[s];
+            <g class="@Tone(s)">
+                <path class="line" d="@PathFor(series)" />
+                @for (var i = 0; i < series.Values.Count; i++)
+                {
+                    if (series.Values[i] is not { } v) continue;
+                    <circle class="dot" cx="@F(X(i))" cy="@F(Y(v))" r="3.5">
+                        <title>@($"{series.Name}, {Label(i)}: {Fmt(v)}")</title>
+                    </circle>
+                }
+            </g>
+        }
+    </svg>
+
+    if (Lines.Count > 1)
+    {
+        <ul class="legend">
+            @for (var s = 0; s < Lines.Count; s++)
+            {
+                <li class="@Tone(s)"><i class="swatch"></i>@Lines[s].Name</li>
+            }
+        </ul>
+    }
+}
+
+@code {
+    private const int W = 640, H = 250, ML = 48, MR = 12, MT = 14, MB = 36;
+
+    [Parameter, EditorRequired] public List<string> XLabels { get; set; } = [];
+    [Parameter, EditorRequired] public List<Series> Lines { get; set; } = [];
+    [Parameter] public string AriaLabel { get; set; } = "Line chart";
+    [Parameter] public Func<double, string>? Format { get; set; }
+    /// <summary>Start the axis at zero (counts) instead of near the data (rents).</summary>
+    [Parameter] public bool ZeroBased { get; set; }
+    /// <summary>Only whole-number ticks.</summary>
+    [Parameter] public bool Whole { get; set; }
+
+    private bool hasData;
+    private int n = 1;
+    private double lo, hi, step = 1;
+
+    protected override void OnParametersSet()
+    {
+        n = Math.Max(XLabels.Count, 1);
+        var values = Lines.SelectMany(s => s.Values).Where(v => v.HasValue).Select(v => v!.Value).ToList();
+        hasData = values.Count > 0;
+        if (hasData) (lo, hi, step) = Axis(values.Min(), values.Max(), ZeroBased, Whole);
+    }
+
+    private static string Tone(int index) => "s" + (index % 6);
+
+    private string Fmt(double value) => (Format ?? Num)(value);
+    private string Label(int i) => i < XLabels.Count ? XLabels[i] : "";
+
+    private double X(int i) => n == 1 ? ML + (W - ML - MR) / 2.0 : ML + (W - ML - MR) * i / (double)(n - 1);
+    private double Y(double v) => MT + (H - MT - MB) * (1 - (v - lo) / (hi - lo));
+
+    /// <summary>A path that lifts the pen where a value is missing.</summary>
+    private string PathFor(Series series)
+    {
+        var path = new StringBuilder();
+        var pen = false;
+        for (var i = 0; i < series.Values.Count; i++)
+        {
+            if (series.Values[i] is not { } v) { pen = false; continue; }
+            path.Append(pen ? " L" : " M").Append(F(X(i))).Append(' ').Append(F(Y(v)));
+            pen = true;
+        }
+        return path.ToString().Trim();
+    }
+}

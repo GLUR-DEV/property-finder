@@ -40,6 +40,9 @@ public class ApiClient(HttpClient http)
         };
     }
 
+    public Task<StatsResponse?> GetStatsAsync(string? scope = null) =>
+        GetAsync<StatsResponse>(scope is null ? "api/stats" : $"api/stats?scope={Uri.EscapeDataString(scope)}");
+
     public Task<JobDto> StartSearchAsync(SearchRequest request) => PostAsync("api/searches", request);
 
     public Task<JobDto> StartGrabAsync(string region, string district) =>

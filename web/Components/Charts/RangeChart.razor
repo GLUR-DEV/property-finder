@@ -1,0 +1,58 @@
+@using static RentalFinder.Web.Services.ChartMath
+
+@if (Items.Count == 0)
+{
+    <p class="muted">Nothing to chart yet.</p>
+}
+else
+{
+    var lo = Math.Floor(Items.Min(i => i.Min) * 0.9 / 10) * 10;
+    var hi = Math.Ceiling(Items.Max(i => i.Max) * 1.05 / 10) * 10;
+    if (hi <= lo) hi = lo + 10;
+    var step = NiceStep((hi - lo) / 4);
+    lo = Math.Floor(lo / step) * step;
+    hi = Math.Ceiling(hi / step) * step;
+    var ticks = Math.Max(1, (int)Math.Round((hi - lo) / step));
+    var height = Items.Count * RowH + 32;
+    Func<double, double> x = v => PlotX + (v - lo) / (hi - lo) * PlotW;
+
+    <svg class="chart" viewBox="0 0 @W @height" role="img" aria-label="@AriaLabel">
+        @for (var t = 0; t <= ticks; t++)
+        {
+            var gx = x(lo + step * t);
+            <g>
+                <line class="grid" x1="@F(gx)" x2="@F(gx)" y1="0" y2="@(Items.Count * RowH)" />
+                <text class="axis" x="@F(gx)" y="@(Items.Count * RowH + 16)" text-anchor="middle">@Money(lo + step * t)</text>
+            </g>
+        }
+        @for (var i = 0; i < Items.Count; i++)
+        {
+            var item = Items[i];
+            var cy = i * RowH + RowH / 2;
+            var x1 = x(item.Min);
+            var x2 = x(item.Max);
+            var spread = item.Max - item.Min > 0.5;
+            <g>
+                <title>@($"{item.Label}: {Money(item.Min)} to {Money(item.Max)}, median {Money(item.Median)}, {item.Count} listings")</title>
+                <text class="label" x="@(PlotX - 24 - 8)" y="@(cy + 4)" text-anchor="end">@Truncate($"{item.Label} ({item.Count})", 24)</text>
+                @if (spread)
+                {
+                    <g>
+                        <rect class="range" x="@F(x1)" y="@(cy - 5)" width="@F(x2 - x1)" height="10" rx="5" />
+                        <text class="axis" x="@F(x1 - 6)" y="@(cy + 4)" text-anchor="end">@Money(item.Min)</text>
+                        <text class="axis" x="@F(x2 + 6)" y="@(cy + 4)">@Money(item.Max)</text>
+                    </g>
+                }
+                <circle class="median" cx="@F(x(item.Median))" cy="@cy" r="6" />
+                <text class="value-end" x="@RightX" y="@(cy + 4)">median @Money(item.Median)</text>
+            </g>
+        }
+    </svg>
+}
+
+@code {
+    private const int W = 640, RowH = 36, PlotX = 170, PlotW = 290, RightX = 500;
+
+    [Parameter, EditorRequired] public List<GroupStat> Items { get; set; } = [];
+    [Parameter] public string AriaLabel { get; set; } = "Rent range chart";
+}

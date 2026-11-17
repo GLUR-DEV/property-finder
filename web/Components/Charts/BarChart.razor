@@ -1,0 +1,40 @@
+@using static RentalFinder.Web.Services.ChartMath
+
+@if (Items.Count == 0)
+{
+    <p class="muted">Nothing to chart yet.</p>
+}
+else
+{
+    var (_, top, _) = Axis(0, Items.Max(i => i.Value), true, false);
+    var height = Items.Count * RowH + 8;
+    var barMax = W - LabelW - ValueW;
+
+    <svg class="chart" viewBox="0 0 @W @height" role="img" aria-label="@AriaLabel">
+        @for (var i = 0; i < Items.Count; i++)
+        {
+            var item = Items[i];
+            var y = 4 + i * RowH;
+            var width = item.Value / top * barMax;
+            <g>
+                <text class="label" x="@(LabelW - 8)" y="@(y + RowH / 2 + 4)" text-anchor="end">
+                    <title>@item.Label</title>@Truncate(item.Label, 26)
+                </text>
+                <rect class="bar" x="@LabelW" y="@(y + 4)" width="@F(Math.Max(width, 1))" height="@(RowH - 8)" rx="2">
+                    <title>@(item.Tip ?? $"{item.Label}: {Fmt(item.Value)}")</title>
+                </rect>
+                <text class="value-end" x="@F(LabelW + width + 6)" y="@(y + RowH / 2 + 4)">@Fmt(item.Value)</text>
+            </g>
+        }
+    </svg>
+}
+
+@code {
+    private const int W = 640, RowH = 28, LabelW = 170, ValueW = 64;
+
+    [Parameter, EditorRequired] public List<ChartItem> Items { get; set; } = [];
+    [Parameter] public string AriaLabel { get; set; } = "Bar chart";
+    [Parameter] public Func<double, string>? Format { get; set; }
+
+    private string Fmt(double value) => (Format ?? Num)(value);
+}

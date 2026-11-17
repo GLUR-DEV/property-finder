@@ -7,18 +7,32 @@
   POST /api/searches                   scrape listings             -> job
   GET  /api/jobs/{id}                  job progress
   GET  /api/listings                   the latest search's listings
+  GET  /api/stats?scope=...            chart data from the saved history of a search
 """
+
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from pydantic.alias_generators import to_camel
 
+import history
 import locations
 import scraper
+import stats
 import store
 from jobs import Busy, Job, Jobs
 
-app = FastAPI(title="Rental finder API")
+
+
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    history.init()
+    history.import_existing()  # first run: keep the results already in listings.json
+    yield
+
+
+app = FastAPI(title="Rental finder API", lifespan=lifespan)
 jobs = Jobs()
 
 BUSY = HTTPException(409, "Another browser task is still running. Wait for it to finish.")
@@ -135,6 +149,7 @@ def start_search(req: SearchRequest) -> dict:
 
         listings = scraper.fetch_listings(url, progress)
         store.save(url, listings)
+        history.record(url, listings)
         job.count = len(listings)
         job.message = (f"Saved {len(listings)} listings" if listings
                        else "No listings matched this search")
@@ -156,6 +171,11 @@ def get_job(job_id: str) -> dict:
 @app.get("/api/listings")
 def get_listings() -> dict:
     return store.load()
+
+
+@app.get("/api/stats")
+def get_stats(scope: str | None = None) -> dict:
+    return stats.build(scope)
 
 
 if __name__ == "__main__":

@@ -1,0 +1,60 @@
+@using static RentalFinder.Web.Services.ChartMath
+
+@if (Items.Count == 0)
+{
+    <p class="muted">Nothing to chart yet.</p>
+}
+else
+{
+    var (_, top, step) = Axis(0, Items.Max(i => i.Value), true, true);
+    var ticks = Math.Max(1, (int)Math.Round(top / step));
+    var plotW = W - ML - MR;
+    var plotH = H - MT - MB;
+    var band = (double)plotW / Items.Count;
+    var barW = Math.Min(band * 0.72, 56);
+    var skip = (int)Math.Ceiling(Items.Count / 8.0);
+
+    <svg class="chart" viewBox="0 0 @W @H" role="img" aria-label="@AriaLabel">
+        @for (var t = 0; t <= ticks; t++)
+        {
+            var y = MT + plotH - plotH * t / (double)ticks;
+            <g>
+                <line class="grid" x1="@ML" x2="@(W - MR)" y1="@F(y)" y2="@F(y)" />
+                <text class="axis" x="@(ML - 6)" y="@F(y + 4)" text-anchor="end">@Fmt(step * t)</text>
+            </g>
+        }
+        @for (var i = 0; i < Items.Count; i++)
+        {
+            var item = Items[i];
+            var h = item.Value / top * plotH;
+            var cx = ML + band * i + band / 2;
+            <g>
+                <rect class="bar" x="@F(cx - barW / 2)" y="@F(MT + plotH - h)" width="@F(barW)" height="@F(h)" rx="2">
+                    <title>@(item.Tip ?? $"{item.Label}: {Fmt(item.Value)}")</title>
+                </rect>
+                @if (Items.Count <= 14 && item.Value > 0)
+                {
+                    <g>
+                        <text class="value" x="@F(cx)" y="@F(MT + plotH - h - 5)">@Fmt(item.Value)</text>
+                    </g>
+                }
+                @if (i % skip == 0)
+                {
+                    <g>
+                        <text class="axis" x="@F(cx)" y="@(H - MB + 16)" text-anchor="middle">@item.Label</text>
+                    </g>
+                }
+            </g>
+        }
+    </svg>
+}
+
+@code {
+    private const int W = 640, H = 250, ML = 40, MR = 8, MT = 22, MB = 36;
+
+    [Parameter, EditorRequired] public List<ChartItem> Items { get; set; } = [];
+    [Parameter] public string AriaLabel { get; set; } = "Column chart";
+    [Parameter] public Func<double, string>? Format { get; set; }
+
+    private string Fmt(double value) => (Format ?? Num)(value);
+}

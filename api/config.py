@@ -7,6 +7,7 @@ DATA_DIR = Path(os.environ.get("DATA_DIR", Path(__file__).parent / "data"))
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 
 SEARCHES_CSV = DATA_DIR / "searches.csv"      # saved suburbs (region, district, suburb_name, suburb_id)
+HISTORY_DB = DATA_DIR / "history.db"          # every search, one row per listing per search
 LISTINGS_JSON = DATA_DIR / "listings.json"    # latest search: metadata + every listing, all fields
 LISTINGS_CSV = DATA_DIR / "listings.csv"      # same listings flattened to columns
 RAW_JSON = DATA_DIR / "response_raw.json"     # first page's embedded JSON, for inspection

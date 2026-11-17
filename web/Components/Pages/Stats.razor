@@ -1,0 +1,289 @@
+@page "/stats"
+@using RentalFinder.Web.Components.Charts
+@using static RentalFinder.Web.Services.ChartMath
+@inject ApiClient Api
+
+<PageTitle>Statistics</PageTitle>
+
+@if (error is not null)
+{
+    <div class="notice error">@error</div>
+}
+else if (stats is null)
+{
+    <p class="muted">Loading statistics…</p>
+}
+else if (!stats.HasData)
+{
+    <div class="empty">
+        <h1>No statistics yet</h1>
+        <p>Every search is saved, and the charts build from that history. Run a search to get started.</p>
+        <a class="button" href="search">Start a search</a>
+    </div>
+}
+else
+{
+    var rent = stats.Rent!;
+    var supply = stats.Supply!;
+    var listers = stats.Listers!;
+    var trends = stats.Trends!;
+    var scope = stats.Scope!;
+
+    <div class="stats">
+        <div class="toolbar">
+            <div>
+                <h1>Statistics</h1>
+                <p class="muted">
+                    @stats.Count listings, from the search run on @(stats.SearchedAt?.ToLocalTime().ToString("d MMM yyyy, h:mm tt")).
+                    @Plural(scope.Runs, "run") saved for this search.
+                </p>
+            </div>
+            <label>Search
+                <select @bind="scopeKey" @bind:after="ReloadAsync">
+                    @foreach (var s in stats.Scopes!)
+                    {
+                        <option value="@s.ScopeKey">@s.Label (@Plural(s.Runs, "run"))</option>
+                    }
+                </select>
+            </label>
+        </div>
+
+        <dl class="figures">
+            <div><dt>Listings</dt><dd>@stats.Count</dd></div>
+            <div><dt>Median rent a week</dt><dd>@(rent.Median is { } m ? Money(m) : "None")</dd></div>
+            <div><dt>Cheapest to dearest</dt><dd>@(rent.Min is { } lowest && rent.Max is { } highest ? $"{Money(lowest)} to {Money(highest)}" : "None")</dd></div>
+            <div><dt>Median time listed</dt><dd>@(supply.MedianAgeDays is { } age ? $"{Num(age)} days" : "None")</dd></div>
+        </dl>
+
+        <section>
+            <h2>Rent</h2>
+            <div class="charts">
+                <figure>
+                    <h3>How rents are spread</h3>
+                    <ColumnChart Items="HistogramItems(rent)" AriaLabel="Number of listings at each weekly rent" />
+                    <figcaption class="muted small">Listings in each weekly rent band, labelled with the lowest rent in the band.</figcaption>
+                </figure>
+
+                <figure>
+                    <div class="figure-head">
+                        <h3>By suburb</h3>
+                        <div class="segmented" role="group" aria-label="Measure">
+                            <button class="@(suburbMetric == "median" ? "on" : "")" @onclick='() => suburbMetric = "median"'>Median rent</button>
+                            <button class="@(suburbMetric == "bedroom" ? "on" : "")" @onclick='() => suburbMetric = "bedroom"'>Per bedroom</button>
+                        </div>
+                    </div>
+                    <BarChart Items="SuburbItems()" Format="Money" AriaLabel="Rent by suburb" />
+                    <figcaption class="muted small">The @(Math.Min(stats.BySuburb!.Count, 15)) suburbs with the most listings, with the listing count in brackets.@SuburbNote()</figcaption>
+                </figure>
+
+                <figure>
+                    <h3>By bedrooms</h3>
+                    <RangeChart Items="stats.ByBedrooms!" AriaLabel="Rent range by number of bedrooms" />
+                    <figcaption class="muted small">The bar runs from the cheapest to the dearest listing, and the dot marks the median.</figcaption>
+                </figure>
+
+                <figure>
+                    <h3>By property type</h3>
+                    <RangeChart Items="stats.ByType!" AriaLabel="Rent range by property type" />
+                </figure>
+            </div>
+        </section>
+
+        <section>
+            <h2>Supply</h2>
+            <div class="charts">
+                <figure>
+                    <h3>New listings each week</h3>
+                    <ColumnChart Items="NewItems(supply)" AriaLabel="New listings each week" />
+                    <figcaption class="muted small">Weeks start on Monday. @Plural(supply.NewOlder, "listing") went up more than 12 weeks ago and @(supply.NewOlder == 1 ? "isn't" : "aren't") shown. Listings that have already been taken down aren't counted.</figcaption>
+                </figure>
+
+                <figure>
+                    <h3>When places become available</h3>
+                    <ColumnChart Items="AvailabilityItems(supply)" AriaLabel="Listings by date available" />
+                    <figcaption class="muted small">Earlier means before this week. @Plural(supply.AvailableLater, "listing") become available after the weeks shown.</figcaption>
+                </figure>
+
+                <figure>
+                    <h3>How long listings have been up</h3>
+                    <ColumnChart Items="AgeItems(supply)" AriaLabel="Listings by how long they have been listed" />
+                    <figcaption class="muted small">Listings that have been up a long time may be overpriced or already let.</figcaption>
+                </figure>
+            </div>
+        </section>
+
+        <section>
+            <h2>Private landlords and agencies</h2>
+            <div class="charts">
+                <figure>
+                    <h3>Who is listing</h3>
+                    <div class="split" role="img" aria-label="Share of private listings and agency or company listings">
+                        <div class="seg s0" style="width:@Width(listers.PrivateListers.Share)">@(listers.PrivateListers.Share >= 0.12 ? Pct(listers.PrivateListers.Share) : "")</div>
+                        <div class="seg s1" style="width:@Width(listers.AgencyListers.Share)">@(listers.AgencyListers.Share >= 0.12 ? Pct(listers.AgencyListers.Share) : "")</div>
+                    </div>
+                    <ul class="legend big">
+                        <li class="s0"><i class="swatch"></i><strong>Private</strong> @Plural(listers.PrivateListers.Count, "listing"), @(MedianText(listers.PrivateListers.MedianRent))</li>
+                        <li class="s1"><i class="swatch"></i><strong>Agency or company</strong> @Plural(listers.AgencyListers.Count, "listing"), @(MedianText(listers.AgencyListers.MedianRent))</li>
+                    </ul>
+                    <figcaption class="muted small">A listing counts as private when no agency is attached to it.</figcaption>
+                </figure>
+
+                <figure>
+                    <h3>Busiest agencies and companies</h3>
+                    <BarChart Items="AgencyItems(listers)" AriaLabel="Listings by agency" Format="Num" />
+                </figure>
+            </div>
+        </section>
+
+        <section>
+            <h2>Trends over time</h2>
+            @if (trends.Runs.Count < 2)
+            {
+                <div class="notice">
+                    Trends need at least two saved runs of this search. Run the same search again later and the lines will appear.
+                </div>
+            }
+            else
+            {
+                var labels = RunLabels(trends);
+                <div class="charts">
+                    <figure>
+                        <div class="figure-head">
+                            <h3>Median rent</h3>
+                            <select @bind="trendSplit" aria-label="Split median rent by">
+                                <option value="overall">All listings</option>
+                                <option value="bedrooms">By bedrooms</option>
+                                <option value="suburb">By suburb</option>
+                            </select>
+                        </div>
+                        <LineChart XLabels="labels" Lines="MedianSeries(trends)" Format="Money" AriaLabel="Median weekly rent over time" />
+                        <figcaption class="muted small">Each point is one saved run of this search.</figcaption>
+                    </figure>
+
+                    <figure>
+                        <h3>Listings on the market</h3>
+                        <LineChart XLabels="labels" Lines="@(new List<Series> { new("Listings", trends.Runs.Select(r => (double?)r.Count).ToList()) })" ZeroBased="true" Whole="true" AriaLabel="Number of listings over time" />
+                    </figure>
+
+                    <figure>
+                        <h3>Changes since the previous run</h3>
+                        <LineChart XLabels="labels" Lines="ChurnSeries(trends)" ZeroBased="true" Whole="true" AriaLabel="New, removed and price-changed listings" />
+                        <figcaption class="muted small">Removed listings were taken down, likely let. Price changed counts listings still up with a different rent.</figcaption>
+                    </figure>
+
+                    @if (trends.Runs.Any(r => r.RemovedMedianDaysListed.HasValue))
+                    {
+                        <figure>
+                            <h3>Days listed before removal</h3>
+                            <LineChart XLabels="labels" Lines="@(new List<Series> { new("Median days listed", trends.Runs.Select(r => r.RemovedMedianDaysListed).ToList()) })" ZeroBased="true" Whole="true" AriaLabel="Median days a removed listing had been up" />
+                            <figcaption class="muted small">For listings that disappeared between runs, how long they had been up as of the earlier run.</figcaption>
+                        </figure>
+                    }
+
+                    <figure>
+                        <h3>Share of private listings</h3>
+                        <LineChart XLabels="labels" Lines="@(new List<Series> { new("Private", trends.Runs.Select(r => (double?)(r.PrivateShare * 100)).ToList()) })" ZeroBased="true" Format="Percent" AriaLabel="Share of private listings over time" />
+                    </figure>
+                </div>
+            }
+        </section>
+    </div>
+}
+
+@code {
+    private StatsResponse? stats;
+    private string? error;
+    private string? scopeKey;
+    private string suburbMetric = "median";
+    private string trendSplit = "overall";
+
+    protected override Task OnInitializedAsync() => LoadAsync(null);
+
+    private Task ReloadAsync() => LoadAsync(scopeKey);
+
+    private async Task LoadAsync(string? key)
+    {
+        try
+        {
+            stats = await Api.GetStatsAsync(key);
+            scopeKey = stats?.Scope?.ScopeKey;
+            error = null;
+        }
+        catch (ApiException ex)
+        {
+            error = ex.Message;
+        }
+    }
+
+    private static string Plural(int n, string noun) => $"{n} {noun}{(n == 1 ? "" : "s")}";
+
+    private static string Width(double share) =>
+        (share * 100).ToString("0.##", System.Globalization.CultureInfo.InvariantCulture) + "%";
+
+    private static string Percent(double value) => Num(value) + "%";
+
+    private static string MedianText(double? median) => median is { } m ? $"median {Money(m)}" : "no rent data";
+
+    // ---- chart data -----------------------------------------------------
+
+    private static List<ChartItem> HistogramItems(RentStats rent) => rent.Histogram
+        .Select(b => new ChartItem(Money(b.From), b.Count, $"{Money(b.From)} to under {Money(b.To)}: {Plural(b.Count, "listing")}"))
+        .ToList();
+
+    private List<ChartItem> SuburbItems() => stats!.BySuburb!
+        .Select(s => new ChartItem($"{s.Suburb} ({s.Count})",
+            suburbMetric == "median" ? s.Median : s.PerBedroom,
+            $"{s.Suburb}: median {Money(s.Median)}, {Money(s.PerBedroom)} per bedroom, {Plural(s.Count, "listing")}"))
+        .OrderByDescending(i => i.Value)
+        .ToList();
+
+    private string SuburbNote()
+    {
+        var items = SuburbItems();
+        if (items.Count < 2) return "";
+        return $" Dearest is {items[0].Label.Split(" (")[0]} at {Money(items[0].Value)}, cheapest is {items[^1].Label.Split(" (")[0]} at {Money(items[^1].Value)}.";
+    }
+
+    private static List<ChartItem> NewItems(SupplyStats s) => s.NewPerWeek
+        .Select(w => new ChartItem(Day(w.WeekStart), w.Count, $"Week of {Day(w.WeekStart)}: {Plural(w.Count, "new listing")}"))
+        .ToList();
+
+    private static List<ChartItem> AvailabilityItems(SupplyStats s)
+    {
+        var items = new List<ChartItem> { new("Earlier", s.AvailablePast) };
+        items.AddRange(s.Availability.Select(w =>
+            new ChartItem(Day(w.WeekStart), w.Count, $"Week of {Day(w.WeekStart)}: {Plural(w.Count, "listing")} available")));
+        return items;
+    }
+
+    private static List<ChartItem> AgeItems(SupplyStats s) =>
+        s.Ages.Select(a => new ChartItem(a.Label, a.Count)).ToList();
+
+    private static List<ChartItem> AgencyItems(ListerStats l) => l.TopAgencies
+        .Select(a => new ChartItem(a.Name, a.Count, $"{a.Name}: {Plural(a.Count, "listing")}, {MedianText(a.MedianRent)}"))
+        .ToList();
+
+    // ---- trends -----------------------------------------------------------
+
+    /// <summary>Dates for the x axis; the time of day is added if two runs share a date.</summary>
+    private static List<string> RunLabels(TrendStats t)
+    {
+        var days = t.Runs.Select(r => Day(r.SearchedAt)).ToList();
+        if (days.Distinct().Count() == days.Count) return days;
+        return t.Runs.Select(r => r.SearchedAt.ToLocalTime().ToString("d MMM HH:mm")).ToList();
+    }
+
+    private List<Series> MedianSeries(TrendStats t) => trendSplit switch
+    {
+        "bedrooms" => t.ByBedrooms,
+        "suburb" => t.BySuburb,
+        _ => [new Series("All listings", t.Runs.Select(r => r.MedianRent).ToList())],
+    };
+
+    private static List<Series> ChurnSeries(TrendStats t) =>
+    [
+        new("New", t.Runs.Select(r => (double?)r.New).ToList()),
+        new("Removed", t.Runs.Select(r => (double?)r.Removed).ToList()),
+        new("Price changed", t.Runs.Select(r => (double?)r.PriceChanged).ToList()),
+    ];
+}
