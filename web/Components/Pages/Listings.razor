@@ -1,0 +1,238 @@
+@page "/"
+@inject ApiClient Api
+
+<PageTitle>Listings</PageTitle>
+
+@if (error is not null)
+{
+    <div class="notice error">@error</div>
+}
+else if (result is null)
+{
+    <p class="muted">Loading listings…</p>
+}
+else if (result.Listings.Count == 0)
+{
+    <div class="empty">
+        <h1>No listings yet</h1>
+        <p>Run a search and the results will appear here.</p>
+        <a class="button" href="search">Start a search</a>
+    </div>
+}
+else
+{
+    var shown = Filtered();
+    var prices = shown.Where(l => l.RentPerWeek.HasValue).Select(l => l.RentPerWeek!.Value).Order().ToList();
+
+    <div class="layout">
+        <aside class="filters">
+            <h2>Filter</h2>
+
+            <label>Search
+                <input type="search" placeholder="Street, suburb or agency" @bind="text" @bind:event="oninput" />
+            </label>
+
+            <label>Suburb
+                <select @bind="suburb">
+                    <option value="">All suburbs</option>
+                    @foreach (var s in suburbs)
+                    {
+                        <option value="@s">@s</option>
+                    }
+                </select>
+            </label>
+
+            <label>Property type
+                <select @bind="propertyType">
+                    <option value="">Any type</option>
+                    @foreach (var t in types)
+                    {
+                        <option value="@t">@t</option>
+                    }
+                </select>
+            </label>
+
+            <div class="pair">
+                <label>Min rent
+                    <input type="number" min="0" placeholder="$" @bind="minPrice" />
+                </label>
+                <label>Max rent
+                    <input type="number" min="0" placeholder="$" @bind="maxPrice" />
+                </label>
+            </div>
+
+            <label>Bedrooms at least
+                <input type="number" min="0" max="6" @bind="minBeds" />
+            </label>
+
+            <button class="link" @onclick="Reset">Clear filters</button>
+        </aside>
+
+        <section>
+            <div class="toolbar">
+                <div>
+                    <h1>@shown.Count of @result.Listings.Count listings</h1>
+                    <p class="muted">
+                        @if (prices.Count > 0)
+                        {
+                            <text>Median $@(Median(prices).ToString("0")) a week, from $@(prices[0].ToString("0")) to $@(prices[prices.Count - 1].ToString("0")). </text>
+                        }
+                        @if (result.SearchedAt is { } at)
+                        {
+                            <text>Searched @at.ToLocalTime().ToString("d MMM yyyy, h:mm tt").</text>
+                        }
+                    </p>
+                </div>
+                <div class="controls">
+                    <label>Sort
+                        <select @bind="sort">
+                            <option value="newest">Newest listed</option>
+                            <option value="priceAsc">Rent, low to high</option>
+                            <option value="priceDesc">Rent, high to low</option>
+                            <option value="available">Available soonest</option>
+                            <option value="beds">Most bedrooms</option>
+                        </select>
+                    </label>
+                    <div class="segmented" role="group" aria-label="View">
+                        <button class="@(view == "cards" ? "on" : "")" @onclick='() => view = "cards"'>Cards</button>
+                        <button class="@(view == "table" ? "on" : "")" @onclick='() => view = "table"'>Table</button>
+                    </div>
+                </div>
+            </div>
+
+            @if (shown.Count == 0)
+            {
+                <p class="muted">Nothing matches these filters.</p>
+            }
+            else if (view == "cards")
+            {
+                <div class="grid">
+                    @foreach (var l in shown)
+                    {
+                        <article class="card">
+                            <a class="photo" href="@l.TradeMeUrl" target="_blank" rel="noopener">
+                                @if (!string.IsNullOrEmpty(l.PictureHref))
+                                {
+                                    <img src="@l.PictureHref" alt="" loading="lazy" />
+                                }
+                            </a>
+                            <div class="body">
+                                <p class="price"><strong>@Format.Rent(l)</strong>@if (l.RentPerWeek.HasValue){<span> per week</span>}</p>
+                                <h3>@(l.Address ?? l.Title)</h3>
+                                <p class="muted">@l.Suburb, @l.District</p>
+                                <ul class="facts">
+                                    @if (l.Bedrooms.HasValue) { <li>@Format.Beds(l.Bedrooms)</li> }
+                                    @if (l.Bathrooms.HasValue) { <li>@Format.Baths(l.Bathrooms)</li> }
+                                    @if (!string.IsNullOrEmpty(l.PropertyType)) { <li>@l.PropertyType</li> }
+                                </ul>
+                                <p class="small">
+                                    @if (!string.IsNullOrEmpty(l.AvailableFrom)) { <text>Available @l.AvailableFrom. </text> }
+                                    @Format.Ago(l.Listed)
+                                </p>
+                                <p class="links">
+                                    <a href="@l.TradeMeUrl" target="_blank" rel="noopener">Open on Trade Me</a>
+                                    @if (l.MapUrl != "") { <a href="@l.MapUrl" target="_blank" rel="noopener">Map</a> }
+                                </p>
+                            </div>
+                        </article>
+                    }
+                </div>
+            }
+            else
+            {
+                <div class="table-wrap">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Rent</th><th>Address</th><th>Suburb</th><th>Bed</th><th>Bath</th>
+                                <th>Type</th><th>Available</th><th>Agency</th><th></th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var l in shown)
+                            {
+                                <tr>
+                                    <td class="num">@Format.Rent(l)</td>
+                                    <td>@(l.Address ?? l.Title)</td>
+                                    <td>@l.Suburb</td>
+                                    <td class="num">@l.Bedrooms</td>
+                                    <td class="num">@l.Bathrooms</td>
+                                    <td>@l.PropertyType</td>
+                                    <td>@l.AvailableFrom</td>
+                                    <td>@(l.Agency?.Name)</td>
+                                    <td><a href="@l.TradeMeUrl" target="_blank" rel="noopener">Open</a></td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            }
+        </section>
+    </div>
+}
+
+@code {
+    private ListingsResult? result;
+    private string? error;
+    private List<string> suburbs = [];
+    private List<string> types = [];
+
+    private string text = "";
+    private string suburb = "";
+    private string propertyType = "";
+    private int? minPrice, maxPrice, minBeds;
+    private string sort = "newest";
+    private string view = "cards";
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            result = await Api.GetListingsAsync();
+            suburbs = result.Listings.Select(l => l.Suburb).OfType<string>().Where(s => s != "").Distinct().Order().ToList();
+            types = result.Listings.Select(l => l.PropertyType).OfType<string>().Where(s => s != "").Distinct().Order().ToList();
+        }
+        catch (ApiException ex)
+        {
+            error = ex.Message;
+        }
+    }
+
+    private List<Listing> Filtered()
+    {
+        var q = result!.Listings.AsEnumerable();
+        if (!string.IsNullOrWhiteSpace(text))
+        {
+            var needle = text.Trim();
+            q = q.Where(l => $"{l.Title} {l.Address} {l.Suburb} {l.Agency?.Name}"
+                .Contains(needle, StringComparison.OrdinalIgnoreCase));
+        }
+        if (suburb != "") q = q.Where(l => l.Suburb == suburb);
+        if (propertyType != "") q = q.Where(l => l.PropertyType == propertyType);
+        if (minPrice is { } lo) q = q.Where(l => l.RentPerWeek >= lo);
+        if (maxPrice is { } hi) q = q.Where(l => l.RentPerWeek <= hi);
+        if (minBeds is { } b) q = q.Where(l => l.Bedrooms >= b);
+        return Sort(q).ToList();
+    }
+
+    private IEnumerable<Listing> Sort(IEnumerable<Listing> items) => sort switch
+    {
+        "priceAsc" => items.OrderBy(l => l.RentPerWeek ?? decimal.MaxValue),
+        "priceDesc" => items.OrderByDescending(l => l.RentPerWeek ?? 0),
+        "available" => items.OrderBy(l => l.AvailableDate ?? DateTime.MaxValue),
+        "beds" => items.OrderByDescending(l => l.Bedrooms ?? 0),
+        _ => items.OrderByDescending(l => l.Listed ?? DateTimeOffset.MinValue),
+    };
+
+    private static decimal Median(List<decimal> sorted)
+    {
+        var mid = sorted.Count / 2;
+        return sorted.Count % 2 == 1 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+    }
+
+    private void Reset()
+    {
+        text = suburb = propertyType = "";
+        minPrice = maxPrice = minBeds = null;
+    }
+}

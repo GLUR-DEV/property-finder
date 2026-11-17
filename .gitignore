@@ -1,0 +1,9 @@
+# .NET
+bin/
+obj/
+# Python
+__pycache__/
+.venv/
+# Scraped data (listings are rebuilt by running a search)
+api/data/response_raw.json
+api/data/page.html

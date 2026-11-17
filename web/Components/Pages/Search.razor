@@ -1,0 +1,207 @@
+@page "/search"
+@inject ApiClient Api
+@inject NavigationManager Nav
+
+<PageTitle>New search</PageTitle>
+
+<div class="narrow">
+    <h1>New search</h1>
+
+    @if (loadError is not null)
+    {
+        <div class="notice error">@loadError</div>
+    }
+    else if (locations is null)
+    {
+        <p class="muted">Loading saved locations…</p>
+    }
+    else if (locations.Count == 0)
+    {
+        <div class="empty">
+            <p>No suburbs are saved yet. Add a region and district first.</p>
+            <a class="button" href="locations">Add locations</a>
+        </div>
+    }
+    else
+    {
+        <fieldset disabled="@busy">
+            <div class="pair">
+                <label>Region
+                    <select @bind="region" @bind:after="RegionChanged">
+                        @foreach (var r in locations)
+                        {
+                            <option value="@r.Region">@Format.Pretty(r.Region)</option>
+                        }
+                    </select>
+                </label>
+                <label>District
+                    <select @bind="district" @bind:after="DistrictChanged">
+                        @foreach (var d in Districts)
+                        {
+                            <option value="@d.District">@Format.Pretty(d.District)</option>
+                        }
+                    </select>
+                </label>
+            </div>
+
+            <div class="section-head">
+                <h2>Suburbs</h2>
+                <span class="muted">@chosen.Count of @Suburbs.Count selected</span>
+                <button class="link" @onclick="SelectAll">Select all</button>
+                <button class="link" @onclick="chosen.Clear">Clear</button>
+            </div>
+            <div class="checks">
+                @foreach (var s in Suburbs)
+                {
+                    <label class="check">
+                        <input type="checkbox" checked="@chosen.Contains(s.Id)"
+                               @onchange="e => Toggle(s.Id, e.Value is true)" />
+                        @s.Name
+                    </label>
+                }
+            </div>
+
+            <h2>Filters</h2>
+            <div class="trio">
+                <label>Min rent a week <input type="number" min="0" @bind="request.PriceMin" /></label>
+                <label>Max rent a week <input type="number" min="0" @bind="request.PriceMax" /></label>
+                <span></span>
+                <label>Min bedrooms <input type="number" min="0" max="6" @bind="request.BedroomsMin" /></label>
+                <label>Max bedrooms <input type="number" min="0" max="6" @bind="request.BedroomsMax" /></label>
+                <span></span>
+                <label>Min bathrooms <input type="number" min="0" max="6" @bind="request.BathroomsMin" /></label>
+                <label>Max bathrooms <input type="number" min="0" max="6" @bind="request.BathroomsMax" /></label>
+                <span></span>
+            </div>
+
+            <div class="checks">
+                @foreach (var (value, label) in PropertyTypes)
+                {
+                    <label class="check">
+                        <input type="checkbox" checked="@types.Contains(value)"
+                               @onchange="e => ToggleType(value, e.Value is true)" />
+                        @label
+                    </label>
+                }
+            </div>
+            <p class="muted small">Leave a filter blank to skip it. With no property type ticked, every type is included.</p>
+        </fieldset>
+
+        <div class="actions">
+            <button class="button" disabled="@busy" @onclick="StartAsync">Search Trade Me</button>
+        </div>
+
+        if (job is not null && busy)
+        {
+            <div class="notice">
+                <strong>@job.Message</strong>
+                <span class="muted"> — @job.Count listings so far. A browser window opens while this runs.</span>
+            </div>
+        }
+        if (error is not null)
+        {
+            <div class="notice error">@error</div>
+        }
+        if (notice is not null)
+        {
+            <div class="notice">@notice</div>
+        }
+    }
+</div>
+
+@code {
+    private static readonly (string Value, string Label)[] PropertyTypes =
+    [
+        ("apartment", "Apartment"), ("car-park", "Car park"), ("house", "House"),
+        ("townhouse", "Townhouse"), ("unit", "Unit"),
+    ];
+
+    private List<RegionDto>? locations;
+    private string? loadError, error, notice;
+    private string region = "", district = "";
+    private readonly HashSet<string> chosen = [];
+    private readonly HashSet<string> types = [];
+    private readonly SearchRequest request = new();
+    private JobDto? job;
+    private bool busy;
+
+    private List<DistrictDto> Districts =>
+        locations?.FirstOrDefault(r => r.Region == region)?.Districts ?? [];
+
+    private List<SuburbDto> Suburbs =>
+        Districts.FirstOrDefault(d => d.District == district)?.Suburbs ?? [];
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            locations = await Api.GetLocationsAsync();
+            if (locations.Count > 0)
+            {
+                region = locations[0].Region;
+                district = Districts.FirstOrDefault()?.District ?? "";
+            }
+        }
+        catch (ApiException ex)
+        {
+            loadError = ex.Message;
+        }
+    }
+
+    private void RegionChanged()
+    {
+        district = Districts.FirstOrDefault()?.District ?? "";
+        chosen.Clear();
+    }
+
+    private void DistrictChanged() => chosen.Clear();
+
+    private void SelectAll()
+    {
+        foreach (var s in Suburbs) chosen.Add(s.Id);
+    }
+
+    private void Toggle(string id, bool on)
+    {
+        if (on) chosen.Add(id); else chosen.Remove(id);
+    }
+
+    private void ToggleType(string value, bool on)
+    {
+        if (on) types.Add(value); else types.Remove(value);
+    }
+
+    private async Task StartAsync()
+    {
+        error = notice = null;
+        if (chosen.Count == 0)
+        {
+            error = "Pick at least one suburb.";
+            return;
+        }
+
+        request.Region = region;
+        request.District = district;
+        request.SuburbIds = Suburbs.Where(s => chosen.Contains(s.Id)).Select(s => s.Id).ToList();
+        request.PropertyTypes = types.ToList();
+
+        busy = true;
+        try
+        {
+            job = await Api.StartSearchAsync(request);
+            job = await Api.WaitForJobAsync(job, j => { job = j; StateHasChanged(); });
+
+            if (job.Failed) error = job.Error;
+            else if (job.Count > 0) Nav.NavigateTo("/");
+            else notice = job.Message;
+        }
+        catch (ApiException ex)
+        {
+            error = ex.Message;
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+}

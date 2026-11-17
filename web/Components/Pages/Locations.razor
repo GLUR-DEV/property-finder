@@ -1,0 +1,127 @@
+@page "/locations"
+@inject ApiClient Api
+
+<PageTitle>Locations</PageTitle>
+
+<div class="narrow">
+    <h1>Locations</h1>
+
+    <h2>Add suburbs from Trade Me</h2>
+    <p class="muted">Pick a region and district and the app saves every suburb in it. A browser window opens briefly each time.</p>
+
+    <fieldset disabled="@working">
+        <div class="pair">
+            <label>Region
+                <select @bind="newRegion" @bind:after="RegionChangedAsync" disabled="@(siteRegions.Count == 0)">
+                    <option value="">@(siteRegions.Count == 0 ? "Load regions first" : "Choose a region")</option>
+                    @foreach (var r in siteRegions)
+                    {
+                        <option value="@r">@Format.Pretty(r)</option>
+                    }
+                </select>
+            </label>
+            <label>District
+                <select @bind="newDistrict" disabled="@(siteDistricts.Count == 0)">
+                    <option value="">Choose a district</option>
+                    @foreach (var d in siteDistricts)
+                    {
+                        <option value="@d">@Format.Pretty(d)</option>
+                    }
+                </select>
+            </label>
+        </div>
+        <div class="actions">
+            @if (siteRegions.Count == 0)
+            {
+                <button class="button" @onclick="LoadRegionsAsync">Load regions</button>
+            }
+            else
+            {
+                <button class="button" disabled="@(newRegion == "" || newDistrict == "")" @onclick="SaveAsync">Save suburbs</button>
+            }
+        </div>
+    </fieldset>
+
+    @if (working)
+    {
+        <div class="notice">@(job?.Message ?? "Opening Trade Me…")</div>
+    }
+    @if (error is not null)
+    {
+        <div class="notice error">@error</div>
+    }
+    @if (notice is not null)
+    {
+        <div class="notice">@notice</div>
+    }
+
+    <h2>Saved locations</h2>
+    @if (locations is null)
+    {
+        <p class="muted">Loading…</p>
+    }
+    else if (locations.Count == 0)
+    {
+        <p class="muted">Nothing saved yet.</p>
+    }
+    else
+    {
+        foreach (var r in locations)
+        {
+            <h3>@Format.Pretty(r.Region)</h3>
+            foreach (var d in r.Districts)
+            {
+                <details>
+                    <summary>@Format.Pretty(d.District) <span class="muted">(@d.Suburbs.Count suburbs)</span></summary>
+                    <p class="suburbs">@(string.Join(", ", d.Suburbs.Select(s => s.Name)))</p>
+                </details>
+            }
+        }
+    }
+</div>
+
+@code {
+    private List<RegionDto>? locations;
+    private List<string> siteRegions = [];
+    private List<string> siteDistricts = [];
+    private string newRegion = "", newDistrict = "";
+    private string? error, notice;
+    private JobDto? job;
+    private bool working;
+
+    protected override async Task OnInitializedAsync()
+    {
+        try { locations = await Api.GetLocationsAsync(); }
+        catch (ApiException ex) { error = ex.Message; }
+    }
+
+    private Task LoadRegionsAsync() =>
+        Guard(async () => siteRegions = await Api.GetSiteRegionsAsync());
+
+    private Task RegionChangedAsync() => Guard(async () =>
+    {
+        newDistrict = "";
+        siteDistricts = newRegion == "" ? [] : await Api.GetSiteDistrictsAsync(newRegion);
+    });
+
+    private Task SaveAsync() => Guard(async () =>
+    {
+        job = await Api.StartGrabAsync(newRegion, newDistrict);
+        job = await Api.WaitForJobAsync(job, j => { job = j; StateHasChanged(); });
+        if (job.Failed) throw new ApiException(job.Error ?? "Saving suburbs failed.");
+
+        notice = job.Message;
+        locations = await Api.GetLocationsAsync();
+    });
+
+    /// <summary>Run an action with the busy state and error handling around it.</summary>
+    private async Task Guard(Func<Task> action)
+    {
+        working = true;
+        error = notice = null;
+        job = null;
+        try { await action(); }
+        catch (ApiException ex) { error = ex.Message; }
+        finally { working = false; }
+    }
+}
