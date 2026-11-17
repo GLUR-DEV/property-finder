@@ -123,6 +123,32 @@ th { font-weight: 600; color: var(--muted); }
 tbody tr:last-child td { border-bottom: 0; }
 td.num { font-variant-numeric: tabular-nums; }
 
+/* ---- listing detail ---- */
+.card { cursor: pointer; }
+.card:hover { border-color: var(--accent); }
+.card-title { all: unset; cursor: pointer; }
+.card-title:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+body:has(.modal-backdrop) { overflow: hidden; }
+.modal-backdrop {
+    position: fixed; inset: 0; z-index: 20;
+    display: flex; align-items: flex-start; justify-content: center;
+    padding: 2rem 1rem; overflow-y: auto;
+    background: rgba(8, 20, 23, .6);
+}
+.modal {
+    width: 100%; max-width: 56rem; padding: 1.25rem 1.5rem 1.5rem;
+    background: var(--bg); border: 1px solid var(--line); border-radius: 10px;
+}
+.modal:focus { outline: none; }
+.modal-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 1rem; }
+.modal-head h2 { margin: 0 0 .15rem; font-size: 1.35rem; }
+.gallery { display: grid; grid-template-columns: repeat(auto-fill, minmax(9rem, 1fr)); gap: .5rem; margin: 1rem 0; }
+.gallery img { width: 100%; aspect-ratio: 4 / 3; object-fit: cover; border-radius: 6px; display: block; background: var(--tint); }
+.fields-title { margin-top: 1.25rem; }
+.fields th, .fields td { white-space: normal; overflow-wrap: anywhere; vertical-align: top; }
+.fields th { width: 14rem; font-weight: 500; font-variant-numeric: tabular-nums; }
+
 /* ---- locations ---- */
 details { padding: .4rem 0; border-bottom: 1px solid var(--line); }
 summary { cursor: pointer; font-weight: 500; }

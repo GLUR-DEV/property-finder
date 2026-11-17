@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Text.Json;
 using RentalFinder.Web.Models;
 
 namespace RentalFinder.Web.Services;
@@ -22,5 +23,53 @@ public static class Format
         if (date is not { } d) return "";
         var days = (int)(DateTimeOffset.Now - d).TotalDays;
         return days switch { <= 0 => "Listed today", 1 => "Listed yesterday", _ => $"Listed {days} days ago" };
+    }
+
+    /// <summary>
+    /// Flatten a listing's JSON into (field, value) rows the way listings.csv does:
+    /// nested objects become dotted names (geographicLocation.latitude) and list
+    /// items get an index (agency.agents[0].fullName). Empty values are kept.
+    /// </summary>
+    public static List<KeyValuePair<string, string>> Flatten(JsonElement element)
+    {
+        var rows = new List<KeyValuePair<string, string>>();
+        Walk(element, "", rows);
+        return rows;
+    }
+
+    private static void Walk(JsonElement e, string path, List<KeyValuePair<string, string>> rows)
+    {
+        switch (e.ValueKind)
+        {
+            case JsonValueKind.Object:
+                var any = false;
+                foreach (var property in e.EnumerateObject())
+                {
+                    any = true;
+                    Walk(property.Value, path == "" ? property.Name : $"{path}.{property.Name}", rows);
+                }
+                if (!any && path != "") rows.Add(new(path, "{}"));
+                break;
+
+            case JsonValueKind.Array:
+                var index = 0;
+                foreach (var item in e.EnumerateArray())
+                    Walk(item, $"{path}[{index++}]", rows);
+                if (index == 0) rows.Add(new(path, "[]"));
+                break;
+
+            case JsonValueKind.String:
+                rows.Add(new(path, e.GetString() ?? ""));
+                break;
+
+            case JsonValueKind.Null:
+            case JsonValueKind.Undefined:
+                rows.Add(new(path, ""));
+                break;
+
+            default: // numbers, true, false
+                rows.Add(new(path, e.GetRawText()));
+                break;
+        }
     }
 }

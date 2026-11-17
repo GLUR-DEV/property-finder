@@ -1,4 +1,6 @@
 using System.Globalization;
+using System.Text.Json;
+using System.Text.Json.Serialization;
 
 namespace RentalFinder.Web.Models;
 
@@ -31,6 +33,9 @@ public class SearchRequest
 }
 
 // ---- listings (a subset of the fields Trade Me returns) --------------
+
+/// <summary>The API's response before the listings are turned into <see cref="Listing"/> objects.</summary>
+public record RawListingsResult(DateTimeOffset? SearchedAt, string? Url, int Count, List<JsonElement> Listings);
 
 public class ListingsResult
 {
@@ -73,8 +78,12 @@ public class Listing
     public GeoPoint? GeographicLocation { get; set; }
     public AgencyInfo? Agency { get; set; }
 
+    /// <summary>Every field the scraper saved for this listing, exactly as stored.</summary>
+    [JsonIgnore]
+    public JsonElement Raw { get; set; }
+
     public string TradeMeUrl =>
-        string.IsNullOrEmpty(CanonicalPath) ? "" : "https://www.trademe.co.nz" + CanonicalPath;
+        string.IsNullOrEmpty(CanonicalPath) ? "" : "https://www.trademe.co.nz/a/" + CanonicalPath.TrimStart('/');
 
     public string MapUrl
     {

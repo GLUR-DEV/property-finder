@@ -18,8 +18,27 @@ public class ApiClient(HttpClient http)
     public async Task<List<string>> GetSiteDistrictsAsync(string region) =>
         await GetAsync<List<string>>($"api/site/districts?region={Uri.EscapeDataString(region)}") ?? [];
 
-    public async Task<ListingsResult> GetListingsAsync() =>
-        await GetAsync<ListingsResult>("api/listings") ?? new ListingsResult();
+    private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
+
+    /// <summary>Each listing keeps its full raw JSON in <see cref="Listing.Raw"/> for the detail view.</summary>
+    public async Task<ListingsResult> GetListingsAsync()
+    {
+        var raw = await GetAsync<RawListingsResult>("api/listings");
+        if (raw is null) return new ListingsResult();
+
+        return new ListingsResult
+        {
+            SearchedAt = raw.SearchedAt,
+            Url = raw.Url,
+            Count = raw.Count,
+            Listings = raw.Listings.Select(element =>
+            {
+                var listing = element.Deserialize<Listing>(Json) ?? new Listing();
+                listing.Raw = element;
+                return listing;
+            }).ToList(),
+        };
+    }
 
     public Task<JobDto> StartSearchAsync(SearchRequest request) => PostAsync("api/searches", request);
 

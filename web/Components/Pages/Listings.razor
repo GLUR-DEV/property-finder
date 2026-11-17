@@ -1,4 +1,5 @@
 @page "/"
+@using System.Text.Json
 @inject ApiClient Api
 
 <PageTitle>Listings</PageTitle>
@@ -109,16 +110,16 @@ else
                 <div class="grid">
                     @foreach (var l in shown)
                     {
-                        <article class="card">
-                            <a class="photo" href="@l.TradeMeUrl" target="_blank" rel="noopener">
+                        <article class="card" @onclick="() => Open(l)">
+                            <div class="photo">
                                 @if (!string.IsNullOrEmpty(l.PictureHref))
                                 {
                                     <img src="@l.PictureHref" alt="" loading="lazy" />
                                 }
-                            </a>
+                            </div>
                             <div class="body">
                                 <p class="price"><strong>@Format.Rent(l)</strong>@if (l.RentPerWeek.HasValue){<span> per week</span>}</p>
-                                <h3>@(l.Address ?? l.Title)</h3>
+                                <h3><button type="button" class="card-title">@(l.Address ?? l.Title)</button></h3>
                                 <p class="muted">@l.Suburb, @l.District</p>
                                 <ul class="facts">
                                     @if (l.Bedrooms.HasValue) { <li>@Format.Beds(l.Bedrooms)</li> }
@@ -129,7 +130,7 @@ else
                                     @if (!string.IsNullOrEmpty(l.AvailableFrom)) { <text>Available @l.AvailableFrom. </text> }
                                     @Format.Ago(l.Listed)
                                 </p>
-                                <p class="links">
+                                <p class="links" @onclick="NoOp" @onclick:stopPropagation>
                                     <a href="@l.TradeMeUrl" target="_blank" rel="noopener">Open on Trade Me</a>
                                     @if (l.MapUrl != "") { <a href="@l.MapUrl" target="_blank" rel="noopener">Map</a> }
                                 </p>
@@ -169,6 +170,67 @@ else
             }
         </section>
     </div>
+
+    if (picked is not null)
+    {
+        <div class="modal-backdrop" @onclick="Close">
+            <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title" tabindex="-1"
+                 @ref="modal" @onclick="NoOp" @onclick:stopPropagation @onkeydown="ModalKey">
+                <div class="modal-head">
+                    <div>
+                        <p class="price"><strong>@Format.Rent(picked)</strong>@if (picked.RentPerWeek.HasValue){<span> per week</span>}</p>
+                        <h2 id="modal-title">@(picked.Address ?? picked.Title)</h2>
+                        <p class="muted">@picked.Suburb, @picked.District, @picked.Region</p>
+                    </div>
+                    <button class="button" @onclick="Close">Close</button>
+                </div>
+
+                <p class="links">
+                    <a href="@picked.TradeMeUrl" target="_blank" rel="noopener">Open on Trade Me</a>
+                    @if (picked.MapUrl != "") { <a href="@picked.MapUrl" target="_blank" rel="noopener">Map</a> }
+                </p>
+
+                @if (picked.PhotoUrls is { Count: > 0 } photos)
+                {
+                    <div class="gallery">
+                        @foreach (var photo in photos)
+                        {
+                            <a href="@photo" target="_blank" rel="noopener"><img src="@photo" alt="" loading="lazy" /></a>
+                        }
+                    </div>
+                }
+
+                <h3 class="fields-title">All scraped fields <span class="muted">(@fields.Count)</span></h3>
+                <p class="muted small">The same fields as listings.csv. Photo URLs are shown as the pictures above.</p>
+                <div class="table-wrap">
+                    <table class="fields">
+                        <tbody>
+                            @foreach (var field in fields)
+                            {
+                                <tr>
+                                    <th scope="row">@field.Key</th>
+                                    <td>
+                                        @if (field.Value == "")
+                                        {
+                                            <span class="muted">empty</span>
+                                        }
+                                        else if (field.Value.StartsWith("http", StringComparison.OrdinalIgnoreCase))
+                                        {
+                                            <a href="@field.Value" target="_blank" rel="noopener">@field.Value</a>
+                                        }
+                                        else
+                                        {
+                                            <span>@field.Value</span>
+                                        }
+                                    </td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    }
 }
 
 @code {
@@ -183,6 +245,11 @@ else
     private int? minPrice, maxPrice, minBeds;
     private string sort = "newest";
     private string view = "cards";
+
+    private Listing? picked;
+    private List<KeyValuePair<string, string>> fields = [];
+    private ElementReference modal;
+    private bool focusModal;
 
     protected override async Task OnInitializedAsync()
     {
@@ -228,6 +295,33 @@ else
     {
         var mid = sorted.Count / 2;
         return sorted.Count % 2 == 1 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (focusModal)
+        {
+            focusModal = false;
+            await modal.FocusAsync(); // so Escape works straight away
+        }
+    }
+
+    private void Open(Listing listing)
+    {
+        picked = listing;
+        fields = listing.Raw.ValueKind == JsonValueKind.Undefined
+            ? []
+            : Format.Flatten(listing.Raw).Where(f => !f.Key.StartsWith("photoUrls[")).ToList();
+        focusModal = true;
+    }
+
+    private void Close() => picked = null;
+
+    private void NoOp() { }
+
+    private void ModalKey(KeyboardEventArgs e)
+    {
+        if (e.Key == "Escape") Close();
     }
 
     private void Reset()
