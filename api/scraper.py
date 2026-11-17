@@ -11,6 +11,7 @@ from typing import Callable
 from urllib.parse import parse_qs, parse_qsl, urlencode, urlparse, urlunparse
 
 from playwright.sync_api import Locator, Page, sync_playwright
+from playwright.sync_api import TimeoutError as PlaywrightTimeout
 
 import config
 
@@ -147,10 +148,22 @@ def slugify(text: str) -> str:
     return re.sub(r"[^a-z0-9]+", "-", text).strip("-")
 
 
-def select_options(page: Page, select_css: str) -> list[str]:
-    """Slugs of a <select>'s options, without the leading 'All ...' entry."""
+def select_options(page: Page, select_css: str, timeout_ms: int = 15_000) -> list[str]:
+    """Slugs of a <select>'s options, without the leading 'All ...' entry.
+
+    Waits for more than one <option>: the select already holds its 'All ...'
+    placeholder before Angular fills in the real entries (the district select
+    does this until a region is chosen), so waiting for a single option returns
+    too early with an empty list."""
     option_css = f"{select_css} option"
-    page.wait_for_selector(option_css, state="attached")  # Angular renders async
+    try:
+        page.wait_for_function(
+            "css => document.querySelectorAll(css).length > 1",
+            arg=option_css,
+            timeout=timeout_ms,
+        )
+    except PlaywrightTimeout:
+        raise ValueError(f"Trade Me didn't load any options for {select_css}")
     labels = page.locator(option_css).all_text_contents()
     return [slugify(t) for t in labels if t.strip()][1:]
 
@@ -159,8 +172,30 @@ def choose(page: Page, select_css: str, slug: str, what: str) -> None:
     options = select_options(page, select_css)
     if slug not in options:
         raise ValueError(f"Unknown {what} '{slug}'")
+    # Angular adds its ng-* form classes once it has bound the <select>. A choice
+    # made before that fires its change event with nobody listening, so the
+    # dependent district list never fills.
+    page.wait_for_selector(f"{select_css}.ng-untouched", state="attached", timeout=15_000)
     # Index 0 is the 'All ...' entry, so the option's index is its position + 1
     page.locator(select_css).select_option(index=options.index(slug) + 1)
+
+
+def choose_region(page: Page, region: str, attempts: int = 3) -> list[str]:
+    """Pick a region and return its districts, re-picking if they don't load.
+
+    The district select starts disabled with only its 'All districts' entry and
+    is filled in by Trade Me's page after the region changes."""
+    for attempt in range(1, attempts + 1):
+        choose(page, REGION_SELECT, region, "region")
+        try:
+            return select_options(page, DISTRICT_SELECT, timeout_ms=8_000)
+        except ValueError:
+            if attempt == attempts:
+                raise
+            # Bounce back to 'All New Zealand' so picking the region is a real change again
+            page.locator(REGION_SELECT).select_option(index=0)
+            page.wait_for_timeout(500)
+    return []
 
 
 def site_regions() -> list[str]:
@@ -180,8 +215,10 @@ def site_districts(region: str) -> list[str]:
         try:
             page = browser.new_page()
             page.goto(config.START_URL)
-            choose(page, REGION_SELECT, region, "region")
-            return select_options(page, DISTRICT_SELECT)
+            districts = choose_region(page, region)
+            if not districts:
+                raise ValueError(f"No districts found for region '{region}'")
+            return districts
         finally:
             browser.close()
 
@@ -205,7 +242,7 @@ def grab_suburbs(region: str, district: str) -> list[tuple[str, str]]:
         try:
             page = browser.new_page()
             page.goto(config.START_URL)
-            choose(page, REGION_SELECT, region, "region")
+            choose_region(page, region)
             choose(page, DISTRICT_SELECT, district, "district")
 
             panel, names = open_suburb_panel(page)

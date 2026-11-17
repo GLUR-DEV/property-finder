@@ -102,6 +102,8 @@
     {
         newDistrict = "";
         siteDistricts = newRegion == "" ? [] : await Api.GetSiteDistrictsAsync(newRegion);
+        if (newRegion != "" && siteDistricts.Count == 0)
+            error = $"Trade Me returned no districts for {Format.Pretty(newRegion)}.";
     });
 
     private Task SaveAsync() => Guard(async () =>
