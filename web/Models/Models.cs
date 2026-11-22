@@ -125,6 +125,15 @@ public class Listing
     public GeoPoint? GeographicLocation { get; set; }
     public AgencyInfo? Agency { get; set; }
 
+    /// <summary>"facebook" for a Marketplace listing captured by the browser extension; empty for Trade Me.</summary>
+    public string? ListingSource { get; set; }
+    public string? ExternalUrl { get; set; }
+    public string? PriceNote { get; set; }       // set when the rent was converted or interpreted
+
+    public bool IsFacebook => ListingSource == "facebook";
+    public string SourceName => IsFacebook ? "Facebook" : "Trade Me";
+    public string SourceUrl => IsFacebook ? ExternalUrl ?? "" : TradeMeUrl;
+
     /// <summary>Every field the scraper saved for this listing, exactly as stored.</summary>
     [JsonIgnore]
     public JsonElement Raw { get; set; }

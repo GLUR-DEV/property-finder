@@ -84,6 +84,17 @@ else
                 </select>
             </label>
 
+            @if (hasFacebook)
+            {
+                <label>Source
+                    <select @bind="source">
+                        <option value="">Trade Me and Facebook</option>
+                        <option value="trademe">Trade Me only</option>
+                        <option value="facebook">Facebook only</option>
+                    </select>
+                </label>
+            }
+
             <button class="link" @onclick="Reset">Clear filters</button>
         </aside>
 
@@ -136,10 +147,11 @@ else
                                 }
                             </div>
                             <div class="body">
-                                <p class="price"><strong>@Format.Rent(l)</strong>@if (l.RentPerWeek.HasValue){<span> per week</span>}</p>
+                                <p class="price" title="@l.PriceNote"><strong>@Format.Rent(l)</strong>@if (l.RentPerWeek.HasValue){<span> per week</span>}</p>
                                 <h3><button type="button" class="card-title">@(l.Address ?? l.Title)</button></h3>
-                                <p class="muted">@l.Suburb, @l.District</p>
+                                <p class="muted">@Format.Place(l.Suburb, l.District)</p>
                                 <ul class="facts">
+                                    @if (l.IsFacebook) { <li class="source">Facebook</li> }
                                     @if (l.Bedrooms.HasValue) { <li>@Format.Beds(l.Bedrooms)</li> }
                                     @if (l.Bathrooms.HasValue) { <li>@Format.Baths(l.Bathrooms)</li> }
                                     @if (!string.IsNullOrEmpty(l.PropertyType)) { <li>@l.PropertyType</li> }
@@ -149,7 +161,7 @@ else
                                     @Format.Ago(l.Listed, result.SearchedAt)
                                 </p>
                                 <p class="links" @onclick="NoOp" @onclick:stopPropagation>
-                                    <a href="@l.TradeMeUrl" target="_blank" rel="noopener">Open on Trade Me</a>
+                                    <a href="@l.SourceUrl" target="_blank" rel="noopener">Open on @l.SourceName</a>
                                     @if (l.MapUrl != "") { <a href="@l.MapUrl" target="_blank" rel="noopener">Map</a> }
                                 </p>
                             </div>
@@ -164,7 +176,7 @@ else
                         <thead>
                             <tr>
                                 <th>Rent</th><th>Address</th><th>Suburb</th><th>Bed</th><th>Bath</th>
-                                <th>Type</th><th>Available</th><th>Agency</th><th></th>
+                                <th>Type</th><th>Available</th><th>Agency</th><th>Source</th><th></th>
                             </tr>
                         </thead>
                         <tbody>
@@ -179,7 +191,8 @@ else
                                     <td>@l.PropertyType</td>
                                     <td>@l.AvailableFrom</td>
                                     <td>@(l.Agency?.Name)</td>
-                                    <td><a href="@l.TradeMeUrl" target="_blank" rel="noopener">Open</a></td>
+                                    <td>@l.SourceName</td>
+                                    <td><a href="@l.SourceUrl" target="_blank" rel="noopener">Open</a></td>
                                 </tr>
                             }
                         </tbody>
@@ -197,14 +210,18 @@ else
                 <div class="modal-head">
                     <div>
                         <p class="price"><strong>@Format.Rent(picked)</strong>@if (picked.RentPerWeek.HasValue){<span> per week</span>}</p>
+                        @if (!string.IsNullOrEmpty(picked.PriceNote))
+                        {
+                            <p class="muted small">@picked.PriceNote</p>
+                        }
                         <h2 id="modal-title">@(picked.Address ?? picked.Title)</h2>
-                        <p class="muted">@picked.Suburb, @picked.District, @picked.Region</p>
+                        <p class="muted">@Format.Place(picked.Suburb, picked.District, picked.Region)</p>
                     </div>
                     <button class="button" @onclick="Close">Close</button>
                 </div>
 
                 <p class="links">
-                    <a href="@picked.TradeMeUrl" target="_blank" rel="noopener">Open on Trade Me</a>
+                    <a href="@picked.SourceUrl" target="_blank" rel="noopener">Open on @picked.SourceName</a>
                     @if (picked.MapUrl != "") { <a href="@picked.MapUrl" target="_blank" rel="noopener">Map</a> }
                 </p>
 
@@ -263,6 +280,8 @@ else
     private int? minPrice, maxPrice, minBeds, minBaths;
     private DateTime? availableBy;
     private string landlord = "";
+    private string source = "";
+    private bool hasFacebook;
     private string sort = "newest";
     private string view = "cards";
 
@@ -278,6 +297,7 @@ else
             result = await Api.GetListingsAsync();
             suburbs = result.Listings.Select(l => l.Suburb).OfType<string>().Where(s => s != "").Distinct().Order().ToList();
             types = result.Listings.Select(l => l.PropertyType).OfType<string>().Where(s => s != "").Distinct().Order().ToList();
+            hasFacebook = result.Listings.Any(l => l.IsFacebook);
         }
         catch (ApiException ex)
         {
@@ -305,6 +325,8 @@ else
         if (availableBy is { } by) q = q.Where(l => l.AvailableDate is not { } d || d.Date <= by.Date);
         if (landlord == "agency") q = q.Where(HasAgency);
         if (landlord == "private") q = q.Where(l => !HasAgency(l));
+        if (source == "facebook") q = q.Where(l => l.IsFacebook);
+        if (source == "trademe") q = q.Where(l => !l.IsFacebook);
         return Sort(q).ToList();
     }
 
@@ -352,7 +374,7 @@ else
 
     private void Reset()
     {
-        text = suburb = propertyType = landlord = "";
+        text = suburb = propertyType = landlord = source = "";
         minPrice = maxPrice = minBeds = minBaths = null;
         availableBy = null;
     }

@@ -129,6 +129,7 @@ fieldset { border: 0; margin: 0; padding: 0; min-width: 0; }
 .price strong { font-size: 1.75rem; line-height: 1.1; color: var(--ink); font-weight: 700; letter-spacing: -.02em; font-variant-numeric: tabular-nums; }
 .facts { list-style: none; display: flex; flex-wrap: wrap; gap: .375rem; margin: .625rem 0; padding: 0; }
 .facts li { padding: .125rem .5rem; background: var(--tint); border-radius: 4px; font-size: .875rem; }
+.facts li.source { background: var(--accent); color: var(--accent-ink); font-weight: 600; }
 .links { display: flex; gap: 1rem; margin: .5rem 0 0; font-size: .9rem; }
 
 .table-wrap { overflow-x: auto; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; }

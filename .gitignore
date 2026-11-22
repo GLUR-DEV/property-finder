@@ -10,5 +10,10 @@ api/data/page.html
 api/data/history.db
 api/data/listings.json
 api/data/listings.csv
+# Facebook Marketplace listings and their photos (other people's content, kept on this computer only)
+api/data/marketplace.json
+api/data/marketplace.json.tmp
+api/data/marketplace.json.broken
+api/data/marketplace_images/
 # Visual Studio cache
 .vs/

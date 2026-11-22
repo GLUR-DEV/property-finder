@@ -15,6 +15,10 @@ public static class Format
 
     public static string Baths(int? n) => n is null ? "" : $"{n} bath";
 
+    /// <summary>"Royal Oak, Auckland City" - parts that are missing are left out, with no stray commas.</summary>
+    public static string Place(params string?[] parts) =>
+        string.Join(", ", parts.Where(p => !string.IsNullOrWhiteSpace(p)));
+
     public static string Rent(Listing l) =>
         l.RentPerWeek is { } r ? "$" + r.ToString("#,0.##", CultureInfo.InvariantCulture) : (l.PriceDisplay ?? "No price");
 

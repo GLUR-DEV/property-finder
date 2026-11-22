@@ -132,6 +132,18 @@ else
                 </select>
             </label>
 
+            @if (hasFacebook)
+            {
+                <label>Source
+                    <select @bind="source">
+                        <option value="">Trade Me and Facebook</option>
+                        <option value="trademe">Trade Me only</option>
+                        <option value="facebook">Facebook only</option>
+                    </select>
+                </label>
+                <p class="muted small hint">Facebook listings have no exact location yet, so they aren't plotted.</p>
+            }
+
             <button class="link" @onclick="Reset">Clear filters</button>
         </aside>
 
@@ -184,6 +196,8 @@ else
     private int? minPrice, maxPrice, minBeds, minBaths;
     private DateTime? availableBy;
     private string landlord = "";
+    private string source = "";
+    private bool hasFacebook;
     private string colorBy = "rent";
 
     private ElementReference mapElement;
@@ -219,6 +233,7 @@ else
             result = await Api.GetListingsAsync();
             suburbs = result.Listings.Select(l => l.Suburb).OfType<string>().Where(s => s != "").Distinct().Order().ToList();
             types = result.Listings.Select(l => l.PropertyType).OfType<string>().Where(s => s != "").Distinct().Order().ToList();
+            hasFacebook = result.Listings.Any(l => l.IsFacebook);
         }
         catch (ApiException ex)
         {
@@ -251,12 +266,14 @@ else
         if (availableBy is { } by) q = q.Where(l => l.AvailableDate is not { } d || d.Date <= by.Date);
         if (landlord == "agency") q = q.Where(HasAgency);
         if (landlord == "private") q = q.Where(l => !HasAgency(l));
+        if (source == "facebook") q = q.Where(l => l.IsFacebook);
+        if (source == "trademe") q = q.Where(l => !l.IsFacebook);
         return q.ToList();
     }
 
     private void Reset()
     {
-        text = suburb = propertyType = landlord = "";
+        text = suburb = propertyType = landlord = source = "";
         minPrice = maxPrice = minBeds = minBaths = null;
         availableBy = null;
     }
@@ -424,15 +441,15 @@ else
         }.Where(s => s != ""));
         if (when != "") sb.Append($"<p class=\"pop-sm\">{E(when)}</p>");
 
-        if (l.TradeMeUrl != "")
-            sb.Append($"<p><a href=\"{E(l.TradeMeUrl)}\" target=\"_blank\" rel=\"noopener\">Open on Trade Me</a></p>");
+        if (l.SourceUrl != "")
+            sb.Append($"<p><a href=\"{E(l.SourceUrl)}\" target=\"_blank\" rel=\"noopener\">Open on {E(l.SourceName)}</a></p>");
 
         return sb.Append("</div>").ToString();
     }
 
     /// <summary>Everything the markers depend on; the map is redrawn only when this changes.</summary>
     private string Signature() => string.Join('|', text, suburb, propertyType, minPrice, maxPrice,
-        minBeds, minBaths, availableBy?.ToString("yyyy-MM-dd"), landlord, colorBy);
+        minBeds, minBaths, availableBy?.ToString("yyyy-MM-dd"), landlord, source, colorBy);
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
     {

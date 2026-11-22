@@ -6,7 +6,10 @@
   POST /api/locations/grab             save a district's suburbs   -> job
   POST /api/searches                   scrape listings             -> job
   GET  /api/jobs/{id}                  job progress
-  GET  /api/listings                   the latest search's listings
+  GET  /api/listings                   the latest search's listings, plus Marketplace listings
+  POST /api/marketplace/cards          listing links seen on Marketplace   -> IDs to open
+  POST /api/marketplace/details        what one Marketplace listing page showed
+  GET  /api/marketplace/images/{name}  a saved Marketplace photo
   GET  /api/stats?scope_key=...        chart data from the saved history of a search
   GET/POST /api/watches                scheduled searches that notify your phone
   PUT/DELETE /api/watches/{id}         edit or remove a watch
@@ -19,12 +22,14 @@
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from pydantic.alias_generators import to_camel
 
 import config
 import history
 import locations
+import marketplace
 import notify
 import scraper
 import stats
@@ -110,6 +115,25 @@ class NotifyRequest(Camel):
     server: str = ""
     topic: str = ""
     token: str | None = None   # None keeps the saved token, "" removes it
+
+
+class MarketplaceCards(Camel):
+    labels: list[str] = Field(max_length=3000)
+
+
+class MarketplaceDetails(Camel):
+    """What the extension read from one listing's page (id comes as a string: 17 digits)."""
+    id: int = Field(ge=1)
+    card_label: str = Field("", max_length=2000)
+    title: str = Field("", max_length=500)
+    price_text: str = Field("", max_length=100)
+    listed_text: str = Field("", max_length=200)
+    details: list[str] = Field(default_factory=list, max_length=40)
+    location: str = Field("", max_length=200)
+    description: str = Field("", max_length=20000)
+    region_slug: str = Field("", max_length=60)
+    photos: list[str] = Field(default_factory=list, max_length=20)
+    gone: bool = False
 
 
 def search_url(req: SearchRequest) -> str:
@@ -214,7 +238,31 @@ def get_job(job_id: str) -> dict:
 
 @app.get("/api/listings")
 def get_listings() -> dict:
-    return store.load()
+    data = store.load()
+    extra = marketplace.listings()   # kept apart from the search, so a new search doesn't remove them
+    if extra:
+        data = {**data, "count": data["count"] + len(extra), "listings": [*data["listings"], *extra]}
+    return data
+
+
+# ------------------------------------------------------------ marketplace
+
+@app.post("/api/marketplace/cards")
+def marketplace_cards(req: MarketplaceCards) -> dict:
+    return marketplace.ingest_cards(req.labels)
+
+
+@app.post("/api/marketplace/details")
+def marketplace_details(req: MarketplaceDetails) -> dict:
+    return marketplace.ingest_details(req.model_dump())
+
+
+@app.get("/api/marketplace/images/{name}")
+def marketplace_image(name: str) -> FileResponse:
+    path = marketplace.image_path(name)
+    if path is None:
+        raise HTTPException(404, "No such image")
+    return FileResponse(path, headers={"Cache-Control": "public, max-age=86400"})
 
 
 @app.get("/api/stats")

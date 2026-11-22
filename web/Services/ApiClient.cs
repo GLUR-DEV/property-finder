@@ -35,10 +35,19 @@ public class ApiClient(HttpClient http)
             {
                 var listing = element.Deserialize<Listing>(Json) ?? new Listing();
                 listing.Raw = element;
+                // Marketplace photos are saved by the API, so their paths point at the API, not at this site
+                listing.PictureHref = FromApi(listing.PictureHref);
+                listing.PhotoUrls = listing.PhotoUrls?.Select(p => FromApi(p) ?? p).ToList();
                 return listing;
             }).ToList(),
         };
     }
+
+    /// <summary>"/api/marketplace/images/1_0.jpg" becomes a full address on the API; anything else is left alone.</summary>
+    private string? FromApi(string? url) =>
+        url is not null && url.StartsWith("/api/") && http.BaseAddress is { } baseAddress
+            ? new Uri(baseAddress, url).ToString()
+            : url;
 
     public Task<StatsResponse?> GetStatsAsync(string? scopeKey = null) =>
         GetAsync<StatsResponse>(scopeKey is null ? "api/stats" : $"api/stats?scope_key={Uri.EscapeDataString(scopeKey)}");
